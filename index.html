@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GameDeals Hub BR - Todas as Lojas em Um Lugar</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; font-family: 'Inter', system-ui, sans-serif; }
+    .store-badge { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+  </style>
+</head>
+<body class="min-h-screen pb-16">
+
+  <!-- HEADER FIXO -->
+  <header class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="bg-indigo-600 p-2 rounded-lg text-white">
+            <i class="fa-solid fa-gamepad text-xl"></i>
+          </div>
+          <div>
+            <h1 class="font-bold text-lg leading-none">GameDeals Hub <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded ml-1">BR</span></h1>
+            <p class="text-xs text-slate-400 mt-0.5">8 lojas monitoradas em tempo real</p>
+          </div>
+        </div>
+        <button onclick="syncLiveAPIs()" class="md:hidden bg-slate-800 hover:bg-slate-700 text-xs px-3 py-2 rounded-lg border border-slate-700 flex items-center gap-1.5">
+          <i class="fa-solid fa-rotate"></i> Atualizar
+        </button>
+      </div>
+
+      <!-- BUSCA E BOTÃO ATUALIZAR -->
+      <div class="flex items-center gap-2 flex-1 max-w-md">
+        <div class="relative w-full">
+          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+          <input id="searchInput" oninput="renderDeals()" type="text" placeholder="Buscar jogo, gift card (ex: eShop, Xbox, Zelda)..." 
+            class="w-full bg-slate-800/90 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+        </div>
+        <button onclick="syncLiveAPIs()" class="hidden md:flex bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3.5 py-2.5 rounded-lg items-center gap-1.5 shrink-0 transition">
+          <i class="fa-solid fa-bolt"></i> Sincronizar
+        </button>
+      </div>
+    </div>
+
+    <!-- ABAS DE CATEGORIA PRINCIPAL -->
+    <div class="max-w-7xl mx-auto mt-3 flex gap-2 overflow-x-auto no-scrollbar pb-1">
+      <button onclick="setCategory('all')" id="cat-all" class="cat-btn bg-indigo-600 text-white px-3.5 py-1.5 rounded-full text-xs font-semibold shrink-0 flex items-center gap-1.5">
+        <i class="fa-solid fa-layer-group"></i> Tudo
+      </button>
+      <button onclick="setCategory('free_game')" id="cat-free_game" class="cat-btn bg-slate-800 text-slate-300 hover:bg-slate-700 px-3.5 py-1.5 rounded-full text-xs font-semibold shrink-0 flex items-center gap-1.5">
+        <i class="fa-solid fa-gift text-emerald-400"></i> Jogos Grátis
+      </button>
+      <button onclick="setCategory('gift_card')" id="cat-gift_card" class="cat-btn bg-slate-800 text-slate-300 hover:bg-slate-700 px-3.5 py-1.5 rounded-full text-xs font-semibold shrink-0 flex items-center gap-1.5">
+        <i class="fa-solid fa-credit-card text-amber-400"></i> Gift Cards & Saldo
+      </button>
+      <button onclick="setCategory('lowest')" id="cat-lowest" class="cat-btn bg-slate-800 text-slate-300 hover:bg-slate-700 px-3.5 py-1.5 rounded-full text-xs font-semibold shrink-0 flex items-center gap-1.5">
+        <i class="fa-solid fa-fire text-rose-500"></i> Menor Preço Histórico
+      </button>
+      <button onclick="setCategory('bundle')" id="cat-bundle" class="cat-btn bg-slate-800 text-slate-300 hover:bg-slate-700 px-3.5 py-1.5 rounded-full text-xs font-semibold shrink-0 flex items-center gap-1.5">
+        <i class="fa-solid fa-boxes-stacked text-purple-400"></i> Bundles
+      </button>
+    </div>
+
+    <!-- FILTRO DAS 8 LOJAS -->
+    <div class="max-w-7xl mx-auto mt-2 flex gap-1.5 overflow-x-auto no-scrollbar pt-1 border-t border-slate-800/80">
+      <button onclick="setStore('all')" id="store-all" class="store-btn bg-slate-700 text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">Todas as 8 Lojas</button>
+      <button onclick="setStore('ntdeals')" id="store-ntdeals" class="store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">🔴 NTDeals (Switch)</button>
+      <button onclick="setStore('xbdeals')" id="store-xbdeals" class="store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">🟢 XBDeals (Xbox)</button>
+      <button onclick="setStore('psdeals')" id="store-psdeals" class="store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">🔵 PSDeals (PS4/PS5)</button>
+      <button onclick="setStore('epic')" id="store-epic" class="store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">⚫ Epic Games</button>
+      <button onclick="setStore('steam')" id="store-steam" class="store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">💠 Steam</button>
+      <button onclick="setStore('nuuvem')" id="store-nuuvem" class="store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">☁️ Nuuvem</button>
+      <button onclick="setStore('instant_gaming')" id="store-instant_gaming" class="store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">🟠 Instant Gaming</button>
+      <button onclick="setStore('humble')" id="store-humble" class="store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0">📕 Humble Bundle</button>
+    </div>
+  </header>
+
+  <!-- CONTEÚDO PRINCIPAL -->
+  <main class="max-w-7xl mx-auto px-4 mt-5">
+    <!-- ATALHOS RÁPIDOS DE VERIFICAÇÃO DIRETA -->
+    <div id="statusBanner" class="mb-4 bg-slate-800/60 border border-slate-700/70 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
+      <span><i class="fa-solid fa-circle-check text-emerald-400 mr-1.5"></i> Conectado: Exibindo dados unificados. Configure suas chaves do Supabase no código para persistência automática.</span>
+      <span id="itemCount" class="font-semibold text-indigo-400">0 ofertas carregadas</span>
+    </div>
+
+    <!-- GRID DE CARDS -->
+    <div id="dealsGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"></div>
+  </main>
+
+  <script>
+    // =========================================================================
+    // CONFIGURAÇÃO DO SUPABASE (Preencha com suas chaves gratuitas do Supabase)
+    // =========================================================================
+    const SUPABASE_URL = ""; // Ex: "https://xyzcompany.supabase.co"
+    const SUPABASE_ANON_KEY = ""; // Sua chave 'anon public'
+
+    let currentCategory = 'all';
+    let currentStore = 'all';
+
+    // Dados demonstrativos iniciais representando as 8 lojas (serão enriquecidos/substituídos pelo Supabase e APIs ao vivo)
+    let allDeals = [
+      {
+        id: 'nt-1',
+        title: 'Gift Card Nintendo eShop R$ 100 / R$ 250 (Parcelado + Cupom)',
+        store: 'nuuvem',
+        platform: 'giftcard',
+        category: 'gift_card',
+        original_price: 250.00,
+        discount_price: 230.00,
+        discount_pct: 8,
+        is_lowest_ever: false,
+        image_url: 'https://assets.nintendo.com/image/upload/c_fill,w_600/ncom/pt_BR/merchandising/Gift-Cards/Switch_eShop_Card',
+        deal_url: 'https://www.nuuvem.com/br-pt/catalog/platforms/nintendo'
+      },
+      {
+        id: 'ig-gift-xbox',
+        title: 'Cartão Xbox Game Pass Core / Gift Card Xbox Live BR',
+        store: 'instant_gaming',
+        platform: 'giftcard',
+        category: 'gift_card',
+        original_price: 199.90,
+        discount_price: 159.90,
+        discount_pct: 20,
+        is_lowest_ever: true,
+        image_url: 'https://gaming-cdn.com/images/products/14825/616x353/xbox-game-pass-core-12-months-pc-xbox-one-xbox-series-x-s-cover.jpg',
+        deal_url: 'https://www.instant-gaming.com/pt/'
+      },
+      {
+        id: 'ntdeals-sample',
+        title: 'Monitoramento eShop Brasil - Menores Preços Históricos (Switch)',
+        store: 'ntdeals',
+        platform: 'switch',
+        category: 'game_deal',
+        original_price: 299.00,
+        discount_price: 89.70,
+        discount_pct: 70,
+        is_lowest_ever: true,
+        image_url: 'https://images.unsplash.com/photo-1612036782180-6f0b6cd846fe?auto=format&fit=crop&w=600&q=80',
+        deal_url: 'https://ntdeals.net/br-store'
+      },
+      {
+        id: 'xbdeals-sample',
+        title: 'Ofertas da Semana Xbox Series X|S (Menor Preço Histórico)',
+        store: 'xbdeals',
+        platform: 'xbox',
+        category: 'game_deal',
+        original_price: 249.95,
+        discount_price: 49.99,
+        discount_pct: 80,
+        is_lowest_ever: true,
+        image_url: 'https://images.unsplash.com/photo-1621259182978-fbf93132d53d?auto=format&fit=crop&w=600&q=80',
+        deal_url: 'https://xbdeals.net/br-store'
+      },
+      {
+        id: 'psdeals-sample',
+        title: 'Promoções PS Store Brasil (PS4 / PS5)',
+        store: 'psdeals',
+        platform: 'ps',
+        category: 'game_deal',
+        original_price: 349.90,
+        discount_price: 139.96,
+        discount_pct: 60,
+        is_lowest_ever: false,
+        image_url: 'https://images.unsplash.com/photo-1606144042614-b2417e99c4e3?auto=format&fit=crop&w=600&q=80',
+        deal_url: 'https://psdeals.net/br-store'
+      },
+      {
+        id: 'humble-choice',
+        title: 'Humble Choice & Pacotes de Jogos PC (8 Jogos Steam)',
+        store: 'humble',
+        platform: 'pc',
+        category: 'bundle',
+        original_price: 650.00,
+        discount_price: 65.00,
+        discount_pct: 90,
+        is_lowest_ever: true,
+        image_url: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=600&q=80',
+        deal_url: 'https://www.humblebundle.com/bundles'
+      }
+    ];
+
+    const storeConfig = {
+      ntdeals: { label: 'NTDeals (Switch)', color: 'bg-red-600 text-white' },
+      xbdeals: { label: 'XBDeals (Xbox)', color: 'bg-emerald-600 text-white' },
+      psdeals: { label: 'PSDeals (PSN)', color: 'bg-blue-600 text-white' },
+      epic: { label: 'Epic Games', color: 'bg-zinc-700 text-white' },
+      steam: { label: 'Steam BR', color: 'bg-sky-700 text-white' },
+      nuuvem: { label: 'Nuuvem', color: 'bg-cyan-600 text-white' },
+      instant_gaming: { label: 'Instant Gaming', color: 'bg-orange-600 text-white' },
+      humble: { label: 'Humble Bundle', color: 'bg-rose-700 text-white' }
+    };
+
+    // Busca ao vivo do Supabase (se configurado) + API pública de ofertas Steam/Epic via CheapShark/GamerPower
+    async function syncLiveAPIs() {
+      const banner = document.getElementById('statusBanner');
+      banner.innerHTML = `<span><i class="fa-solid fa-spinner fa-spin text-indigo-400 mr-1.5"></i> Sincronizando promoções em tempo real...</span>`;
+
+      try {
+        // 1. Se o usuário configurou o Supabase, puxa todas as 8 lojas de lá
+        if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+          const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+          const { data, error } = await sb.from('deals').select('*').order('discount_pct', { ascending: false }).limit(200);
+          if (!error && data && data.length > 0) {
+            allDeals = data;
+          }
+        }
+
+        // 2. Busca ofertas reais ao vivo da Steam e Humble Bundle via API aberta (Sem CORS)
+        const resSteam = await fetch('https://www.cheapshark.com/api/1.0/deals?storeID=1,11&pageSize=16&sortBy=Savings');
+        if (resSteam.ok) {
+          const liveDeals = await resSteam.json();
+          const mappedLive = liveDeals.map(d => ({
+            id: `live-${d.dealID}`,
+            title: d.title,
+            store: d.storeID === "1" ? 'steam' : 'humble',
+            platform: 'pc',
+            category: parseFloat(d.salePrice) === 0 ? 'free_game' : 'game_deal',
+            original_price: (parseFloat(d.normalPrice) * 5.0).toFixed(2),
+            discount_price: (parseFloat(d.salePrice) * 5.0).toFixed(2),
+            discount_pct: Math.round(parseFloat(d.savings)),
+            is_lowest_ever: parseFloat(d.savings) >= 80,
+            image_url: d.thumb.replace('capsule_sm_120', 'header'),
+            deal_url: d.storeID === "1" 
+              ? `https://store.steampowered.com/app/${d.steamAppID}/?l=portuguese`
+              : `https://www.humblebundle.com/store`
+          }));
+          // Mescla sem duplicar
+          const existingIds = new Set(allDeals.map(x => x.id));
+          mappedLive.forEach(item => { if (!existingIds.has(item.id)) allDeals.push(item); });
+        }
+
+        banner.innerHTML = `<span><i class="fa-solid fa-circle-check text-emerald-400 mr-1.5"></i> Atualizado com sucesso!</span><span id="itemCount" class="font-semibold text-indigo-400"></span>`;
+      } catch (err) {
+        console.warn('Erro ao sincronizar API ao vivo:', err);
+      }
+      renderDeals();
+    }
+
+    function setCategory(cat) {
+      currentCategory = cat;
+      document.querySelectorAll('.cat-btn').forEach(btn => {
+        btn.className = "cat-btn bg-slate-800 text-slate-300 hover:bg-slate-700 px-3.5 py-1.5 rounded-full text-xs font-semibold shrink-0 flex items-center gap-1.5";
+      });
+      document.getElementById(`cat-${cat}`).className = "cat-btn bg-indigo-600 text-white px-3.5 py-1.5 rounded-full text-xs font-semibold shrink-0 flex items-center gap-1.5";
+      renderDeals();
+    }
+
+    function setStore(store) {
+      currentStore = store;
+      document.querySelectorAll('.store-btn').forEach(btn => {
+        btn.className = "store-btn bg-slate-800/70 text-slate-400 hover:text-white px-2.5 py-1 rounded text-xs font-medium shrink-0";
+      });
+      document.getElementById(`store-${store}`).className = "store-btn bg-slate-700 text-white px-2.5 py-1 rounded text-xs font-medium shrink-0";
+      renderDeals();
+    }
+
+    function renderDeals() {
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const grid = document.getElementById('dealsGrid');
+
+      const filtered = allDeals.filter(item => {
+        const matchSearch = item.title.toLowerCase().includes(query) || item.store.toLowerCase().includes(query);
+        const matchStore = currentStore === 'all' || item.store === currentStore;
+        const matchCat = currentCategory === 'all' 
+          || (currentCategory === 'lowest' && item.is_lowest_ever)
+          || item.category === currentCategory;
+        return matchSearch && matchStore && matchCat;
+      });
+
+      document.getElementById('itemCount').innerText = `${filtered.length} ofertas exibidas`;
+
+      grid.innerHTML = filtered.map(deal => {
+        const st = storeConfig[deal.store] || { label: deal.store, color: 'bg-slate-700' };
+        const isFree = Number(deal.discount_price) === 0 || deal.category === 'free_game';
+
+        return `
+          <a href="${deal.deal_url}" target="_blank" rel="noopener" 
+            class="group bg-slate-800/70 hover:bg-slate-800 border border-slate-700/80 hover:border-indigo-500/60 rounded-xl overflow-hidden flex flex-col justify-between transition duration-200 shadow-lg">
+            <div>
+              <div class="relative h-36 bg-slate-900 overflow-hidden">
+                <img src="${deal.image_url}" alt="${deal.title}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" onerror="this.src='https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=500'">
+                <span class="store-badge absolute top-2 left-2 ${st.color} px-2 py-0.5 rounded shadow">${st.label}</span>
+                ${deal.is_lowest_ever ? `<span class="store-badge absolute bottom-2 left-2 bg-rose-600/95 text-white px-2 py-0.5 rounded shadow"><i class="fa-solid fa-arrow-trend-down mr-1"></i>Menor Histórico</span>` : ''}
+                <span class="absolute top-2 right-2 bg-emerald-500 text-slate-950 font-extrabold text-xs px-2 py-1 rounded shadow">
+                  ${isFree ? 'GRÁTIS' : `-${deal.discount_pct}%`}
+                </span>
+              </div>
+              <div class="p-3.5">
+                <h3 class="font-semibold text-sm text-slate-100 line-clamp-2 group-hover:text-indigo-400 transition">${deal.title}</h3>
+              </div>
+            </div>
+            <div class="px-3.5 pb-3.5 pt-2 border-t border-slate-700/50 flex items-center justify-between">
+              <div>
+                <span class="text-xs text-slate-400 line-through block">R$ ${Number(deal.original_price).toFixed(2).replace('.', ',')}</span>
+                <span class="text-base font-extrabold ${isFree ? 'text-emerald-400' : 'text-white'}">
+                  ${isFree ? 'R$ 0,00' : `R$ ${Number(deal.discount_price).toFixed(2).replace('.', ',')}`}
+                </span>
+              </div>
+              <span class="text-xs bg-slate-700 group-hover:bg-indigo-600 text-slate-200 group-hover:text-white px-2.5 py-1.5 rounded-lg font-medium transition">
+                Ver na Loja <i class="fa-solid fa-arrow-up-right-from-square ml-1 text-[10px]"></i>
+              </span>
+            </div>
+          </a>
+        `;
+      }).join('');
+    }
+
+    // Inicia carregando os dados
+    syncLiveAPIs();
+  </script>
+</body>
+</html>
