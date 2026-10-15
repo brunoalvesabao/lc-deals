@@ -2,8 +2,8 @@ name: Sincronizar Ofertas das 8 Lojas
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Roda sozinho a cada 6 horas
-  workflow_dispatch: # Cria um botão manual na aba Actions para você testar na hora
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 jobs:
   sync-deals:
@@ -13,8 +13,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install @supabase/supabase-js cheerio
-      - name: Rodar Coletor
+      - name: Instalar Dependencias e Navegador Anti-Cloudflare
+        run: |
+          npm init -y
+          npm install @supabase/supabase-js cheerio playwright
+          npx playwright install chromium
+      - name: Rodar Coletor Completo (8 Lojas + Gift Cards)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
