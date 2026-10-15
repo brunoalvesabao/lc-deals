@@ -1,0 +1,21 @@
+name: Sincronizar Ofertas das 8 Lojas
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Roda sozinho a cada 6 horas
+  workflow_dispatch: # Cria um botão manual na aba Actions para você testar na hora
+
+jobs:
+  sync-deals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install @supabase/supabase-js cheerio
+      - name: Rodar Coletor
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node sync-deals.mjs
