@@ -1,25 +1,44 @@
-name: Sincronizar Ofertas das 8 Lojas
+name: Sincronizar Ofertas
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '17 */6 * * *'   # a cada 6 horas
   workflow_dispatch:
+    inputs:
+      only_sources:
+        description: 'Rodar só algumas fontes (ex: xbox,nintendo). Vazio = todas'
+        required: false
+        default: ''
 
 jobs:
   sync-deals:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Instalar Dependencias e Navegador Anti-Cloudflare
+
+      - name: Instalar dependências e navegador
         run: |
-          npm init -y
-          npm install @supabase/supabase-js cheerio playwright
-          npx playwright install chromium
-      - name: Rodar Coletor Completo (8 Lojas + Gift Cards)
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Rodar coletor
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ITAD_API_KEY: ${{ secrets.ITAD_API_KEY }}
+          ONLY_SOURCES: ${{ github.event.inputs.only_sources }}
         run: node sync-deals.mjs
+
+      - name: Guardar prints/HTML das lojas que falharam
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-lojas
+          path: debug/
+          if-no-files-found: ignore
+          retention-days: 7
