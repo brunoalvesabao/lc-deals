@@ -502,12 +502,11 @@ async function loadMoreUntilDone(page, { label, textRe, count, maxClicks = 200 }
   let clicks = 0;
   let last = count();
   while (clicks < maxClicks && stale < 3) {
-    const btn = page.getByRole('button', { name: textRe }).last();
-    if (!(await btn.isVisible().catch(() => false))) {
-      await page.mouse.wheel(0, 5000);
-      await sleep(1500);
-      if (!(await btn.isVisible().catch(() => false))) break;
-    }
+    await page.mouse.wheel(0, 20000);
+    await sleep(800);
+    let btn = page.getByRole('button', { name: textRe }).last();
+    if (!(await btn.count().catch(() => 0))) btn = page.locator('button, a').filter({ hasText: textRe }).last();
+    if (!(await btn.count().catch(() => 0))) break;
     await btn.scrollIntoViewIfNeeded().catch(() => {});
     await btn.click({ timeout: 10000 }).catch(() => {});
     clicks++;
@@ -546,9 +545,32 @@ async function collectNintendo() {
   await acceptCookies(page);
   const nextData = await page.$eval('#__NEXT_DATA__', el => el.textContent).catch(() => null);
   if (nextData) { try { take(JSON.parse(nextData)); } catch { /* ignora */ } }
-  console.log(`   nintendo: ${found.size} itens na 1ª página — clicando em "Carregar mais"...`);
+  console.log(`   nintendo: ${found.size} itens na 1ª página`);
 
-  await loadMoreUntilDone(page, { label: 'nintendo', textRe: /carregar mais|mais resultados|load more/i, count: () => found.size, maxClicks: 250 });
+  // O site guarda a página no endereço (#...&p=N). 1º tenta pular direto para o fim (o site carrega tudo até lá);
+  // se não der, anda página por página; se ainda assim não crescer, tenta clicar em "Carregar mais".
+  const base = 'https://www.nintendo.com/pt-br/store/sales-and-deals/';
+  const goHash = async (pn) => {
+    await page.goto(`${base}#show=0&p=${pn}&sort=df`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await page.reload({ waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
+    await page.mouse.wheel(0, 20000);
+    await sleep(1500);
+  };
+  await goHash(120);
+  console.log(`   nintendo: ${found.size} itens após pular para a última página`);
+  if (found.size < 1000) {
+    let stale = 0;
+    for (let pn = 2; pn <= 150 && stale < 3; pn++) {
+      const before = found.size;
+      await goHash(pn);
+      stale = found.size > before ? 0 : stale + 1;
+      if (pn % 10 === 0) console.log(`   nintendo: página ${pn}, ${found.size} itens`);
+    }
+  }
+  if (found.size < 1000) {
+    await page.goto(base, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
+    await loadMoreUntilDone(page, { label: 'nintendo', textRe: /carregar mais|mais resultados|ver mais|load more/i, count: () => found.size, maxClicks: 120 });
+  }
   if (found.size < 100) await dump(page, 'nintendo');
   await page.context().close();
   if (found.size === 0) throw new Error('a página de promoções da Nintendo não entregou jogos (veja debug/nintendo.png)');
