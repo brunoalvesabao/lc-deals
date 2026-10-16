@@ -333,7 +333,7 @@ async function collectEpicFree() {
 // ---------------------------------------------------------------------
 // 3) Xbox — API pública da Microsoft Store (mercado BR)
 // ---------------------------------------------------------------------
-async function collectXbox() {
+async function collectXboxApi() {
   const ids = new Set();
   for (const type of ['Game', 'Durable']) {
     let skip = 0;
@@ -393,6 +393,90 @@ async function collectXbox() {
   return rows;
 }
 
+// Plano B do Xbox: abre o xbox.com BR, clica em "Carregar mais" e captura os dados da página
+function xboxRowsFrom(json, seen) {
+  const rows = [];
+  walk(json, o => {
+    const id = o.productId || o.ProductId;
+    const title = o.title || o.Title || o.name;
+    if (!id || !title || seen.has(id)) return;
+    const sp = o.specificPrices?.purchaseable?.[0] || o.specificPrices?.Purchaseable?.[0];
+    const price = sp || o.price || o.Price;
+    if (!price || typeof price !== 'object') return;
+    const list = Number(price.listPrice ?? price.ListPrice);
+    const msrp = Number(price.msrp ?? price.MSRP);
+    if (!(list >= 0) || !(msrp > 0) || !(list < msrp)) return;
+    seen.add(id);
+    const im = o.images || o.Images || {};
+    const pick = im.superHeroArt || im.titledHeroArt || im.boxArt || im.poster || im.SuperHeroArt || im.BoxArt;
+    let img = typeof pick === 'string' ? pick : pick?.url || pick?.Uri || null;
+    if (img && img.startsWith('//')) img = `https:${img}`;
+    rows.push(baseRow('xbox', {
+      id: `xbox:${id}`,
+      title,
+      store: 'xbox',
+      platform: 'xbox',
+      category: /durable|add-?on|dlc/i.test(o.productKind || o.ProductKind || '') ? 'dlc' : 'game_deal',
+      original_price: msrp,
+      discount_price: list,
+      image_url: img ? `${img}${img.includes('?') ? '&' : '?'}w=480` : null,
+      deal_url: `https://www.xbox.com/pt-BR/games/store/${slugify(title)}/${id}`,
+      expires_at: sp?.endDate && !String(sp.endDate).startsWith('9998') ? sp.endDate : null,
+    }));
+  });
+  return rows;
+}
+
+async function collectXboxBrowser() {
+  const page = await newPage();
+  const seen = new Set();
+  const rows = [];
+  jsonCatcher(page, json => rows.push(...xboxRowsFrom(json, seen)));
+  const candidates = [
+    'https://www.xbox.com/pt-BR/games/browse/DynamicChannel.GameDeals',
+    'https://www.xbox.com/pt-BR/promotions/sales/sales-and-specials',
+    'https://www.xbox.com/pt-BR/games/all-games/console',
+  ];
+  for (const url of candidates) {
+    const before = rows.length;
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 }).catch(e => console.warn('   xbox goto:', e.message));
+    await acceptCookies(page);
+    // Dados que vêm embutidos no HTML (primeira página)
+    const embedded = await page.evaluate(() => {
+      const out = [];
+      for (const sc of document.querySelectorAll('script')) {
+        const t = sc.textContent || '';
+        const m = t.match(/window\.__PRELOADED_STATE__\s*=\s*(\{[\s\S]*\})\s*;?\s*$/);
+        if (m) out.push(m[1]);
+        else if (sc.type === 'application/json' && t.length > 1000) out.push(t);
+      }
+      return out;
+    }).catch(() => []);
+    for (const e of embedded) { try { rows.push(...xboxRowsFrom(JSON.parse(e), seen)); } catch { /* ignora */ } }
+    await loadMoreUntilDone(page, { label: 'xbox', textRe: /carregar mais|mostrar mais|load more/i, count: () => rows.length, maxClicks: 200 });
+    console.log(`   xbox ${url.split('/').slice(-1)[0]}: +${rows.length - before} ofertas`);
+    if (rows.length >= 300) break;
+  }
+  if (rows.length < 50) await dump(page, 'xbox');
+  await page.context().close();
+  return rows;
+}
+
+async function collectXbox() {
+  let rows = [];
+  try {
+    rows = await collectXboxApi();
+    console.log(`   xbox (API): ${rows.length} ofertas`);
+  } catch (e) {
+    console.warn(`   xbox (API) falhou: ${e.message} — tentando pelo xbox.com`);
+  }
+  if (rows.length < 50) {
+    const seen = new Set(rows.map(r => r.id));
+    for (const r of await collectXboxBrowser()) if (!seen.has(r.id)) rows.push(r);
+  }
+  return rows;
+}
+
 // ---------------------------------------------------------------------
 // Navegador invisível (com "stealth" para não parecer robô)
 // ---------------------------------------------------------------------
@@ -404,135 +488,115 @@ async function newPage() {
 }
 
 // ---------------------------------------------------------------------
-// 4) Nintendo — descobre a busca (Algolia) que o próprio site usa e pega o preço BR oficial
+// Ajudante: clica em "Carregar mais" até a lista parar de crescer
 // ---------------------------------------------------------------------
-function algoliaParamsToObject(req) {
-  if (typeof req.params === 'string') {
-    const o = {};
-    for (const [k, v] of new URLSearchParams(req.params)) {
-      try { o[k] = JSON.parse(v); } catch { o[k] = v; }
-    }
-    return o;
+async function acceptCookies(page) {
+  for (const re of [/aceitar|accept all|accept|concordo|permitir/i]) {
+    const btn = page.getByRole('button', { name: re }).first();
+    if (await btn.isVisible().catch(() => false)) { await btn.click().catch(() => {}); await sleep(800); }
   }
-  const { indexName, ...rest } = req;
-  return rest;
 }
 
-function objectToAlgoliaParams(o) {
-  const sp = new URLSearchParams();
-  for (const [k, v] of Object.entries(o)) sp.set(k, typeof v === 'string' ? v : JSON.stringify(v));
-  return sp.toString();
+async function loadMoreUntilDone(page, { label, textRe, count, maxClicks = 200 }) {
+  let stale = 0;
+  let clicks = 0;
+  let last = count();
+  while (clicks < maxClicks && stale < 3) {
+    const btn = page.getByRole('button', { name: textRe }).last();
+    if (!(await btn.isVisible().catch(() => false))) {
+      await page.mouse.wheel(0, 5000);
+      await sleep(1500);
+      if (!(await btn.isVisible().catch(() => false))) break;
+    }
+    await btn.scrollIntoViewIfNeeded().catch(() => {});
+    await btn.click({ timeout: 10000 }).catch(() => {});
+    clicks++;
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    await sleep(700);
+    const now = count();
+    stale = now > last ? 0 : stale + 1;
+    last = now;
+    if (clicks % 20 === 0) console.log(`   ${label}: ${clicks} cliques, ${now} itens`);
+  }
+  console.log(`   ${label}: fim após ${clicks} cliques (${last} itens)`);
 }
 
+function jsonCatcher(page, onJson) {
+  page.on('response', async res => {
+    const ct = res.headers()['content-type'] || '';
+    if (!ct.includes('json')) return;
+    try { onJson(await res.json()); } catch { /* ignora */ }
+  });
+}
+
+// ---------------------------------------------------------------------
+// 4) Nintendo — abre a página de promoções BR, clica em "Carregar mais"
+//    e captura os dados que o próprio site recebe
+// ---------------------------------------------------------------------
 async function collectNintendo() {
   const page = await newPage();
-  const captured = [];
-  page.on('request', req => {
-    const u = req.url();
-    if (!/algolia/i.test(u) || req.method() !== 'POST') return;
-    try {
-      const url = new URL(u);
-      const h = req.headers();
-      const appId = h['x-algolia-application-id'] || url.searchParams.get('x-algolia-application-id');
-      const apiKey = h['x-algolia-api-key'] || url.searchParams.get('x-algolia-api-key');
-      const body = JSON.parse(req.postData() || '{}');
-      for (const r of body.requests || []) captured.push({ appId, apiKey, indexName: r.indexName, params: algoliaParamsToObject(r) });
-    } catch { /* ignora */ }
+  const found = new Map();
+  const take = json => walk(json, o => {
+    if (o.nsuid && o.name && o.urlKey && o.prices && typeof o.prices === 'object') found.set(String(o.nsuid), o);
   });
+  jsonCatcher(page, take);
 
-  const pagesToTry = [
-    'https://www.nintendo.com/pt-br/store/sales-and-deals/',
-    'https://www.nintendo.com/pt-br/store/games/',
-    'https://www.nintendo.com/us/store/sales-and-deals/',
-  ];
-  for (const u of pagesToTry) {
-    try {
-      await page.goto(u, { waitUntil: 'networkidle', timeout: 60000 });
-      await page.mouse.wheel(0, 3000);
-      await sleep(3000);
-    } catch (e) { console.warn('   nintendo goto:', e.message); }
-    if (captured.some(c => c.appId && c.apiKey)) break;
-  }
-  await dump(page, 'nintendo');
+  await page.goto('https://www.nintendo.com/pt-br/store/sales-and-deals/', { waitUntil: 'networkidle', timeout: 60000 })
+    .catch(e => console.warn('   nintendo goto:', e.message));
+  await acceptCookies(page);
+  const nextData = await page.$eval('#__NEXT_DATA__', el => el.textContent).catch(() => null);
+  if (nextData) { try { take(JSON.parse(nextData)); } catch { /* ignora */ } }
+  console.log(`   nintendo: ${found.size} itens na 1ª página — clicando em "Carregar mais"...`);
+
+  await loadMoreUntilDone(page, { label: 'nintendo', textRe: /carregar mais|mais resultados|load more/i, count: () => found.size, maxClicks: 250 });
+  if (found.size < 100) await dump(page, 'nintendo');
   await page.context().close();
+  if (found.size === 0) throw new Error('a página de promoções da Nintendo não entregou jogos (veja debug/nintendo.png)');
 
-  const good = captured.filter(c => c.appId && c.apiKey && c.indexName && /game/i.test(c.indexName));
-  if (good.length === 0) throw new Error('não achei a busca Algolia da Nintendo (veja debug/nintendo.png)');
-  const base = good[0];
-  console.log(`   Algolia Nintendo: app=${base.appId} índice=${base.indexName}`);
-
-  const endpoint = `https://${base.appId}-dsn.algolia.net/1/indexes/*/queries`;
-  const headers = { 'x-algolia-application-id': base.appId, 'x-algolia-api-key': base.apiKey, 'content-type': 'application/json', Referer: 'https://www.nintendo.com/' };
-  const keepParams = { ...base.params };
-  delete keepParams.page; delete keepParams.hitsPerPage; delete keepParams.analytics; delete keepParams.clickAnalytics;
-
-  async function query(extra) {
-    const body = { requests: [{ indexName: base.indexName, params: objectToAlgoliaParams({ ...keepParams, ...extra }) }] };
-    const j = await fetchJson(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
-    return j.results?.[0] || {};
+  // Preço: se a página já veio em R$, usa direto. Se veio em dólar, consulta a API oficial BR.
+  const needBR = [...found.values()].filter(o => o.prices.currency !== 'BRL').map(o => String(o.nsuid));
+  const brPrices = new Map();
+  for (const group of chunk(needBR, 50)) {
+    try {
+      const j = await fetchJson(`https://api.ec.nintendo.com/v1/price?country=BR&lang=pt&ids=${group.join(',')}`);
+      for (const pr of j.prices || []) {
+        if (pr.discount_price && pr.sales_status === 'onsale') {
+          brPrices.set(String(pr.title_id), { regular: parseFloat(pr.regular_price?.raw_value), sale: parseFloat(pr.discount_price.raw_value), end: pr.discount_price.end_datetime });
+        }
+      }
+    } catch (e) { console.warn('   preço BR nintendo:', e.message); }
+    await sleep(200);
   }
-
-  async function allHits(extraFilters = []) {
-    const hits = [];
-    const ff = [...(Array.isArray(keepParams.facetFilters) ? keepParams.facetFilters : []), ...extraFilters];
-    for (let p = 0; p < 10; p++) {
-      const r = await query({ hitsPerPage: 100, page: p, facetFilters: ff });
-      hits.push(...(r.hits || []));
-      if (p + 1 >= (r.nbPages || 0)) break;
-    }
-    return hits;
-  }
-
-  // A Algolia só entrega 1000 resultados por busca: se houver mais, divide pela faceta com mais valores
-  const probe = await query({ hitsPerPage: 0, facets: ['*'], maxValuesPerFacet: 200 });
-  let hits = [];
-  if ((probe.nbHits || 0) <= 1000) {
-    hits = await allHits();
-  } else {
-    const facets = Object.entries(probe.facets || {})
-      .filter(([, vals]) => Object.values(vals).every(c => c <= 1000) && Object.keys(vals).length > 1)
-      .sort((a, b) => Object.values(b[1]).reduce((x, y) => x + y, 0) - Object.values(a[1]).reduce((x, y) => x + y, 0));
-    if (facets.length === 0) hits = await allHits();
-    else {
-      const [facetName, vals] = facets[0];
-      console.log(`   ${probe.nbHits} jogos — dividindo por "${facetName}" (${Object.keys(vals).length} grupos)`);
-      for (const v of Object.keys(vals)) hits.push(...await allHits([`${facetName}:${v}`]));
-    }
-  }
-
-  const byNsuid = new Map();
-  for (const h of hits) if (h.nsuid && /^7001/.test(String(h.nsuid))) byNsuid.set(String(h.nsuid), h);
-  console.log(`   jogos Nintendo encontrados: ${byNsuid.size} — consultando preço BR oficial...`);
 
   const rows = [];
-  for (const group of chunk([...byNsuid.keys()], 50)) {
-    let j;
-    try { j = await fetchJson(`https://api.ec.nintendo.com/v1/price?country=BR&lang=pt&ids=${group.join(',')}`); } catch (e) { console.warn('   preço nintendo:', e.message); continue; }
-    for (const pr of j.prices || []) {
-      if (!pr.discount_price || pr.sales_status !== 'onsale') continue;
-      const h = byNsuid.get(String(pr.title_id));
-      if (!h) continue;
-      const regular = parseFloat(pr.regular_price?.raw_value);
-      const sale = parseFloat(pr.discount_price?.raw_value);
-      if (Number.isNaN(regular) || Number.isNaN(sale)) continue;
-      const imgId = h.horizontalHeaderImage || h.productImage || h.boxart;
-      const img = !imgId ? null : /^https?:/.test(imgId) ? imgId
-        : `https://assets.nintendo.com/image/upload/ar_16:9,c_lpad,w_480/b_white/f_auto/q_auto/${imgId}`;
-      const path = h.url || '';
-      rows.push(baseRow('nintendo', {
-        id: `nintendo:${pr.title_id}`,
-        title: h.title,
-        store: 'nintendo',
-        platform: 'switch',
-        category: /dlc|pack|expansion|season pass|passe/i.test(h.topLevelCategory || h.productType || '') ? 'dlc' : 'game_deal',
-        original_price: regular,
-        discount_price: sale,
-        image_url: img,
-        deal_url: path ? `https://www.nintendo.com${path.replace('/us/', '/pt-br/')}` : 'https://www.nintendo.com/pt-br/store/sales-and-deals/',
-        expires_at: pr.discount_price.end_datetime || null,
-      }));
+  for (const o of found.values()) {
+    let regular; let sale; let end = o.eshopDetails?.discountPriceEnd || null;
+    if (o.prices.currency === 'BRL') {
+      if (!o.prices.discounted) continue;
+      regular = o.prices.regularPrice; sale = o.prices.finalPrice;
+    } else {
+      const br = brPrices.get(String(o.nsuid));
+      if (!br) continue;
+      regular = br.regular; sale = br.sale; end = br.end || end;
     }
-    await sleep(200);
+    if (regular == null || sale == null || !(sale < regular)) continue;
+    const pid = o.productImage?.publicId;
+    const img = pid
+      ? `https://assets.nintendo.com/image/upload/ar_16:9,b_auto:border,c_lpad/b_white/f_auto/q_auto/c_scale,w_480/${pid}`
+      : o.productImageSquare?.url || null;
+    const topCat = typeof o.topLevelCategory === 'string' ? o.topLevelCategory : `${o.topLevelCategory?.code || ''} ${o.topLevelCategory?.label || ''}`;
+    rows.push(baseRow('nintendo', {
+      id: `nintendo:${o.nsuid}`,
+      title: o.name,
+      store: 'nintendo',
+      platform: 'switch',
+      category: o.dlcType || /dlc|conte[uú]do|add-on|adicional/i.test(topCat) ? 'dlc' : 'game_deal',
+      original_price: regular,
+      discount_price: sale,
+      image_url: img,
+      deal_url: `https://www.nintendo.com/pt-br/store/products/${o.urlKey}/`,
+      expires_at: end,
+    }));
   }
   return rows;
 }
@@ -759,8 +823,8 @@ async function collectInstantGaming() {
 const SOURCES = [
   { name: 'itad', label: 'PC (Steam/Epic/Nuuvem/Humble)', fn: collectItad, timeout: 15 * 60e3 },
   { name: 'epic_free', label: 'Epic grátis', fn: collectEpicFree, timeout: 60e3 },
-  { name: 'xbox', label: 'Xbox', fn: collectXbox, timeout: 10 * 60e3 },
-  { name: 'nintendo', label: 'Nintendo', fn: collectNintendo, timeout: 12 * 60e3 },
+  { name: 'xbox', label: 'Xbox', fn: collectXbox, timeout: 18 * 60e3 },
+  { name: 'nintendo', label: 'Nintendo', fn: collectNintendo, timeout: 18 * 60e3 },
   { name: 'playstation', label: 'PlayStation', fn: collectPlayStation, timeout: 12 * 60e3 },
   { name: 'nuuvem_gift', label: 'Gift cards Nuuvem', fn: collectNuuvemGiftCards, timeout: 6 * 60e3 },
   { name: 'instant_gaming', label: 'Instant Gaming', fn: collectInstantGaming, timeout: 6 * 60e3 },
