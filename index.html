@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LC Deals - Deku Deals BR Multi-Loja</title>
+  <title>LC Deals - BR Edition</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
@@ -15,7 +15,7 @@
 </head>
 <body class="min-h-screen pb-20">
 
-  <!-- TOPBAR ESTILO DEKU DEALS -->
+  <!-- TOPBAR  -->
   <header class="sticky top-0 z-40 bg-slate-900/95 backdrop-blur border-b border-slate-800 shadow-lg">
     <div class="max-w-7xl mx-auto px-4 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
       
@@ -33,7 +33,7 @@
           </div>
         </div>
 
-        <!-- BOTÕES DE WISHLIST E COLEÇÃO (ESTILO DEKU DEALS) -->
+        <!-- BOTÕES DE WISHLIST E COLEÇÃO -->
         <div class="flex items-center gap-2">
           <button onclick="setCategory('wishlist')" id="cat-wishlist" class="cat-btn bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
             <i class="fa-solid fa-heart text-rose-500"></i>
@@ -69,7 +69,7 @@
       </div>
     </div>
 
-    <!-- NAVEGAÇÃO ESTILO DEKU DEALS (CATEGORIAS + TETO DE PREÇO) -->
+    <!-- NAVEGAÇÃO (CATEGORIAS + TETO DE PREÇO) -->
     <div class="max-w-7xl mx-auto px-4 py-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
       <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
         <button onclick="setCategory('all')" id="cat-all" class="cat-btn bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0">
@@ -295,7 +295,7 @@
         return matchSearch && matchStore && matchCat;
       });
 
-      // Ordenação estilo Deku Deals
+      // Ordenação 
       filtered.sort((a, b) => {
         if (sortMode === 'price_asc') return Number(a.discount_price) - Number(b.discount_price);
         if (sortMode === 'lowest_first') return (b.is_lowest_ever ? 1 : 0) - (a.is_lowest_ever ? 1 : 0) ? (b.is_lowest_ever ? 1 : 0) - (a.is_lowest_ever ? 1 : 0) : Number(b.discount_pct) - Number(a.discount_pct);
@@ -337,7 +337,7 @@
                   ${isFree ? 'GRÁTIS' : `-${deal.discount_pct}%`}
                 </span>
 
-                <!-- BOTÕES DEKU DEALS: WISHLIST E COLEÇÃO -->
+                <!-- BOTÕES : WISHLIST E COLEÇÃO -->
                 <div class="absolute bottom-2 right-2.5 flex gap-1.5">
                   <button onclick="toggleWishlist(event, '${deal.id}')" title="Adicionar à Wishlist" 
                     class="w-7 h-7 rounded-full flex items-center justify-center backdrop-blur transition ${inWish ? 'bg-rose-600 text-white' : 'bg-slate-900/80 text-slate-300 hover:text-rose-400'}">
