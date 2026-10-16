@@ -1,0 +1,810 @@
+// =====================================================================
+// LC Deals — coletor de ofertas (roda no GitHub Actions)
+//
+// Estratégia: buscar nas FONTES ORIGINAIS, não nos agregadores.
+//   PC (Steam, Epic, Nuuvem, Humble) -> API do IsThereAnyDeal (preço em R$ + menor histórico)
+//   Jogos grátis                     -> Epic (oficial) + brindes do IsThereAnyDeal
+//   Xbox                             -> API pública da Microsoft Store (mercado BR)
+//   Nintendo                         -> busca da Nintendo (Algolia) + API oficial de preços BR
+//   PlayStation                      -> PS Store BR (a mesma API que o site deles usa)
+//   Gift cards                       -> Nuuvem e Instant Gaming (navegador invisível)
+//
+// NTDeals/XBDeals/PSDeals NÃO são usados: eles só repetem os preços das lojas
+// oficiais e bloqueiam robôs (Cloudflare). Buscando direto na fonte não há bloqueio.
+//
+// Cada coletor é isolado: se um falhar, os outros continuam, e o motivo vai
+// para a tabela sync_runs (aparece no site) e para o log do Actions.
+// =====================================================================
+
+import { createClient } from '@supabase/supabase-js';
+import { chromium } from 'playwright-extra';
+import stealth from 'puppeteer-extra-plugin-stealth';
+import fs from 'node:fs';
+
+chromium.use(stealth());
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const ITAD_KEY = process.env.ITAD_API_KEY;
+const ITAD_MAX_PAGES = Number(process.env.ITAD_MAX_PAGES || 50); // 200 ofertas por página por loja
+const ONLY = (process.env.ONLY_SOURCES || '').split(',').map(s => s.trim()).filter(Boolean);
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('Faltam os secrets SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY.');
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
+const RUN_STARTED = new Date().toISOString();
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+fs.mkdirSync('debug', { recursive: true });
+
+// ---------------------------------------------------------------------
+// Utilitários
+// ---------------------------------------------------------------------
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+const round2 = n => (n == null || Number.isNaN(Number(n)) ? null : Math.round(Number(n) * 100) / 100);
+
+function gameKey(title) {
+  return String(title || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[™®©]/g, '')
+    .replace(/\((?=[^)]*\b(ps4|ps5|xbox|switch|pc|windows)\b)[^)]*\)/gi, ' ')
+    .replace(/\s*[-–:|]\s*(ps4|ps5|xbox series x\|s|xbox one|xbox|nintendo switch|switch|pc)((\s*(e|&|and|\/|,)\s*)(ps4|ps5|xbox series x\|s|xbox one))*\s*$/i, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function parseMoney(text) {
+  if (text == null) return null;
+  if (typeof text === 'number') return text;
+  const s = String(text);
+  if (/gr[aá]tis|free|gratuito/i.test(s)) return 0;
+  const m = s.replace(/[\s ]/g, '').match(/\d[\d.,]*/);
+  if (!m) return null;
+  let n = m[0].replace(/[.,]+$/, '');
+  const lastDot = n.lastIndexOf('.');
+  const lastComma = n.lastIndexOf(',');
+  if (lastDot >= 0 && lastComma >= 0) {
+    // os dois aparecem: o último é o separador decimal
+    const dec = lastDot > lastComma ? '.' : ',';
+    const thou = dec === '.' ? ',' : '.';
+    n = n.split(thou).join('').replace(dec, '.');
+  } else if (lastComma >= 0) {
+    n = /,\d{1,2}$/.test(n) ? n.replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.') : n.replace(/,/g, '');
+  } else if (lastDot >= 0) {
+    n = /\.\d{3}$/.test(n) ? n.replace(/\./g, '') : n.replace(/\.(?=.*\.)/g, '');
+  }
+  const v = parseFloat(n);
+  return Number.isNaN(v) ? null : v;
+}
+
+function pct(orig, sale) {
+  if (!orig || orig <= 0 || sale == null) return 0;
+  return Math.max(0, Math.round((1 - sale / orig) * 100));
+}
+
+function slugify(t) {
+  return gameKey(t).replace(/\s+/g, '-') || 'jogo';
+}
+
+function classifyGiftCard(title) {
+  const t = title.toLowerCase();
+  const isGift = /gift ?card|cart[aã]o|wallet|saldo|cr[eé]ditos?|psn|eshop|xbox live|game ?pass|playstation plus|ps plus|nintendo switch online|assinatura|membership/.test(t);
+  let platform = 'giftcard';
+  return { isGift, platform };
+}
+
+async function fetchJson(url, opts = {}, tries = 3) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, { ...opts, headers: { 'User-Agent': UA, Accept: 'application/json', ...(opts.headers || {}) } });
+      if (res.status === 429) {
+        const wait = Number(res.headers.get('retry-after') || 10) * 1000;
+        console.log(`   429 (limite), esperando ${wait / 1000}s...`);
+        await sleep(wait);
+        continue;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status} em ${url.split('?')[0]}`);
+      return await res.json();
+    } catch (e) {
+      lastErr = e;
+      await sleep(1000 * (i + 1));
+    }
+  }
+  throw lastErr;
+}
+
+// Cotação para lojas que às vezes devolvem USD/EUR (Humble, Instant Gaming)
+const rateCache = {};
+async function toBRL(amount, currency) {
+  if (amount == null || !currency || currency === 'BRL') return { value: amount, currency: 'BRL' };
+  try {
+    if (!rateCache[currency]) {
+      const j = await fetchJson(`https://open.er-api.com/v6/latest/${currency}`);
+      rateCache[currency] = j?.rates?.BRL;
+    }
+    if (rateCache[currency]) return { value: round2(amount * rateCache[currency]), currency: `${currency}>BRL` };
+  } catch { /* segue sem converter */ }
+  return { value: amount, currency };
+}
+
+function baseRow(source, fields) {
+  const original = round2(fields.original_price);
+  const sale = round2(fields.discount_price);
+  return {
+    id: fields.id,
+    source,
+    game_key: gameKey(fields.title),
+    title: String(fields.title).trim().slice(0, 300),
+    store: fields.store,
+    platform: fields.platform,
+    category: fields.category,
+    original_price: original,
+    discount_price: sale,
+    discount_pct: fields.discount_pct ?? pct(original, sale),
+    currency: fields.currency || 'BRL',
+    history_low: round2(fields.history_low),
+    image_url: fields.image_url || null,
+    deal_url: fields.deal_url,
+    expires_at: fields.expires_at || null,
+    last_seen_at: RUN_STARTED,
+  };
+}
+
+async function dump(page, name) {
+  try {
+    await page.screenshot({ path: `debug/${name}.png`, fullPage: false });
+    fs.writeFileSync(`debug/${name}.html`, await page.content());
+  } catch { /* ignora */ }
+}
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error(`${label}: tempo esgotado (${ms / 1000}s)`)), ms))]);
+}
+
+// ---------------------------------------------------------------------
+// 1) IsThereAnyDeal — Steam, Epic, Nuuvem, Humble (PC) em R$
+// ---------------------------------------------------------------------
+const PC_STORES = [
+  { key: 'steam', match: /^steam$/i, fallbackId: 61 },
+  { key: 'epic', match: /epic/i, fallbackId: 16 },
+  { key: 'nuuvem', match: /nuuvem/i, fallbackId: 50 },
+  { key: 'humble', match: /humble/i, fallbackId: 37 },
+];
+
+async function itadShops() {
+  const list = await fetchJson(`https://api.isthereanydeal.com/service/shops/v1?country=BR`);
+  const map = {};
+  for (const s of PC_STORES) {
+    const found = (list || []).find(x => s.match.test(x.title || x.name || ''));
+    map[s.key] = found ? found.id : s.fallbackId;
+  }
+  return map;
+}
+
+async function collectItad() {
+  if (!ITAD_KEY) throw new Error('Falta o secret ITAD_API_KEY (crie grátis em isthereanydeal.com/apps/my)');
+  const shops = await itadShops();
+  console.log('   IDs das lojas no ITAD:', shops);
+  const rows = [];
+  for (const store of PC_STORES) {
+    let offset = 0;
+    let pages = 0;
+    let n = 0;
+    while (pages < ITAD_MAX_PAGES) {
+      const url = `https://api.isthereanydeal.com/deals/v2?key=${ITAD_KEY}&country=BR&shops=${shops[store.key]}&limit=200&offset=${offset}&sort=-cut`;
+      const j = await fetchJson(url);
+      for (const g of j.list || []) {
+        const d = g.deal || {};
+        const sale = await toBRL(d.price?.amount, d.price?.currency);
+        const reg = await toBRL(d.regular?.amount, d.regular?.currency);
+        const low = await toBRL(d.historyLow?.amount, d.historyLow?.currency);
+        const a = g.assets || {};
+        let category = g.type === 'dlc' ? 'dlc' : 'game_deal';
+        if (sale.value === 0) category = 'free_game';
+        rows.push(baseRow('itad', {
+          id: `${store.key}:itad-${g.id}`,
+          title: g.title,
+          store: store.key,
+          platform: 'pc',
+          category,
+          original_price: reg.value,
+          discount_price: sale.value,
+          discount_pct: d.cut,
+          currency: sale.currency,
+          history_low: low.value,
+          image_url: a.banner400 || a.banner300 || a.banner600 || a.boxart || null,
+          deal_url: d.url,
+          expires_at: d.expiry,
+        }));
+        n++;
+      }
+      pages++;
+      if (!j.hasMore) break;
+      offset = j.nextOffset ?? offset + 200;
+      await sleep(250);
+    }
+    console.log(`   ${store.key}: ${n} ofertas (${pages} páginas)`);
+  }
+
+  // Bundles da Humble
+  try {
+    let offset = 0;
+    for (let p = 0; p < 6; p++) {
+      const list = await fetchJson(`https://api.isthereanydeal.com/bundles/v1?key=${ITAD_KEY}&country=BR&limit=50&offset=${offset}`);
+      if (!Array.isArray(list) || list.length === 0) break;
+      for (const b of list) {
+        if (!/humble/i.test(b.page?.name || '')) continue;
+        const prices = (b.tiers || []).map(t => t.price).filter(Boolean);
+        const cheapest = prices.sort((x, y) => x.amount - y.amount)[0];
+        const conv = cheapest ? await toBRL(cheapest.amount, cheapest.currency) : { value: null, currency: 'BRL' };
+        const firstGame = b.tiers?.flatMap(t => t.games || [])[0];
+        rows.push(baseRow('itad', {
+          id: `humble:bundle-${b.id}`,
+          title: b.title,
+          store: 'humble',
+          platform: 'pc',
+          category: 'bundle',
+          original_price: null,
+          discount_price: conv.value,
+          discount_pct: 0,
+          currency: conv.currency,
+          image_url: firstGame?.assets?.banner400 || firstGame?.assets?.banner300 || null,
+          deal_url: b.url,
+          expires_at: b.expiry,
+        }));
+      }
+      offset += 50;
+      await sleep(250);
+    }
+  } catch (e) {
+    console.warn('   bundles: ', e.message);
+  }
+
+  // Brindes (jogos grátis para resgatar em qualquer loja de PC)
+  try {
+    const gws = await fetchJson(`https://api.isthereanydeal.com/giveaways/v1?key=${ITAD_KEY}&limit=50`);
+    for (const gw of gws || []) {
+      const shopName = (gw.shop?.name || '').toLowerCase();
+      const store = PC_STORES.find(s => s.match.test(shopName))?.key || 'outras';
+      for (const g of gw.games || [{ title: gw.title }]) {
+        rows.push(baseRow('itad', {
+          id: `${store}:giveaway-${gw.id}-${g.id || slugify(g.title)}`,
+          title: g.title || gw.title,
+          store,
+          platform: 'pc',
+          category: 'free_game',
+          original_price: null,
+          discount_price: 0,
+          discount_pct: 100,
+          image_url: g.assets?.banner400 || g.assets?.banner300 || null,
+          deal_url: gw.url,
+          expires_at: gw.expiry,
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn('   brindes: ', e.message);
+  }
+
+  return rows;
+}
+
+// ---------------------------------------------------------------------
+// 2) Epic — grátis agora e grátis em breve (API oficial)
+// ---------------------------------------------------------------------
+async function collectEpicFree() {
+  const j = await fetchJson('https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions?locale=pt-BR&country=BR&allowCountries=BR');
+  const elements = j?.data?.Catalog?.searchStore?.elements || [];
+  const rows = [];
+  for (const g of elements) {
+    const now = g.promotions?.promotionalOffers?.[0]?.promotionalOffers || [];
+    const soon = g.promotions?.upcomingPromotionalOffers?.[0]?.promotionalOffers || [];
+    const freeNow = now.find(o => o.discountSetting?.discountPercentage === 0);
+    const freeSoon = soon.find(o => o.discountSetting?.discountPercentage === 0);
+    if (!freeNow && !freeSoon) continue;
+    const offer = freeNow || freeSoon;
+    const slug = g.catalogNs?.mappings?.[0]?.pageSlug || g.offerMappings?.[0]?.pageSlug || g.productSlug || g.urlSlug;
+    const img = (g.keyImages || []).find(i => i.type === 'OfferImageWide')
+      || (g.keyImages || []).find(i => i.type === 'DieselStoreFrontWide')
+      || (g.keyImages || []).find(i => i.type === 'Thumbnail')
+      || (g.keyImages || [])[0];
+    rows.push(baseRow('epic_free', {
+      id: `epic:free-${g.id}`,
+      title: g.title,
+      store: 'epic',
+      platform: 'pc',
+      category: freeNow ? 'free_game' : 'free_upcoming',
+      original_price: (g.price?.totalPrice?.originalPrice ?? 0) / 100,
+      discount_price: 0,
+      discount_pct: 100,
+      image_url: img?.url,
+      deal_url: slug ? `https://store.epicgames.com/pt-BR/p/${slug}` : 'https://store.epicgames.com/pt-BR/free-games',
+      expires_at: freeNow ? offer.endDate : offer.startDate, // "em breve": guarda quando começa
+    }));
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------
+// 3) Xbox — API pública da Microsoft Store (mercado BR)
+// ---------------------------------------------------------------------
+async function collectXbox() {
+  const ids = new Set();
+  for (const type of ['Game', 'Durable']) {
+    let skip = 0;
+    for (let p = 0; p < 30; p++) {
+      const url = `https://reco-public.rec.mp.microsoft.com/channels/Reco/V8.0/Lists/Computed/Deal?Market=BR&Language=pt&ItemTypes=${type}&deviceFamily=Windows.Xbox&count=200&skipitems=${skip}`;
+      let j;
+      try { j = await fetchJson(url); } catch (e) { console.warn(`   xbox ${type}:`, e.message); break; }
+      const items = j?.Items || [];
+      items.forEach(i => i.Id && ids.add(i.Id));
+      const total = j?.PagingInfo?.TotalItems ?? 0;
+      skip += items.length;
+      if (items.length === 0 || skip >= total) break;
+    }
+  }
+  console.log(`   IDs de ofertas Xbox: ${ids.size}`);
+  if (ids.size === 0) throw new Error('a lista de ofertas da Microsoft voltou vazia');
+
+  const rows = [];
+  for (const group of chunk([...ids], 20)) {
+    const url = `https://displaycatalog.mp.microsoft.com/v7.0/products?bigIds=${group.join(',')}&market=BR&languages=pt-br&MS-CV=DGU1mcuYo0WMMp+F.1`;
+    let j;
+    try { j = await fetchJson(url); } catch (e) { console.warn('   lote xbox falhou:', e.message); continue; }
+    for (const p of j?.Products || []) {
+      const lp = p.LocalizedProperties?.[0] || {};
+      let best = null;
+      for (const sku of p.DisplaySkuAvailabilities || []) {
+        for (const av of sku.Availabilities || []) {
+          if (!(av.Actions || []).includes('Purchase')) continue;
+          if (av.RemediationRequired) continue; // desconto só para assinantes (Game Pass)
+          const price = av.OrderManagementData?.Price;
+          if (!price || price.CurrencyCode !== 'BRL') continue;
+          if (!(price.ListPrice < price.MSRP)) continue;
+          if (!best || price.ListPrice < best.price.ListPrice) best = { price, av };
+        }
+      }
+      if (!best) continue;
+      const imgs = lp.Images || [];
+      const pick = ['TitledHeroArt', 'SuperHeroArt', 'BrandedKeyArt', 'Poster', 'BoxArt']
+        .map(k => imgs.find(i => i.ImagePurpose === k)).find(Boolean);
+      const img = pick?.Uri ? `${pick.Uri.startsWith('//') ? 'https:' : ''}${pick.Uri}?w=480` : null;
+      const isAddon = p.ProductType === 'Durable';
+      rows.push(baseRow('xbox', {
+        id: `xbox:${p.ProductId}`,
+        title: lp.ProductTitle,
+        store: 'xbox',
+        platform: 'xbox',
+        category: isAddon ? 'dlc' : 'game_deal',
+        original_price: best.price.MSRP,
+        discount_price: best.price.ListPrice,
+        image_url: img,
+        deal_url: `https://www.xbox.com/pt-BR/games/store/${slugify(lp.ProductTitle)}/${p.ProductId}`,
+        expires_at: best.av.Conditions?.EndDate && !best.av.Conditions.EndDate.startsWith('9998') ? best.av.Conditions.EndDate : null,
+      }));
+    }
+    await sleep(150);
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------
+// Navegador invisível (com "stealth" para não parecer robô)
+// ---------------------------------------------------------------------
+let browser;
+async function newPage() {
+  if (!browser) browser = await chromium.launch({ headless: true, args: ['--disable-blink-features=AutomationControlled'] });
+  const ctx = await browser.newContext({ locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', userAgent: UA, viewport: { width: 1366, height: 900 } });
+  return ctx.newPage();
+}
+
+// ---------------------------------------------------------------------
+// 4) Nintendo — descobre a busca (Algolia) que o próprio site usa e pega o preço BR oficial
+// ---------------------------------------------------------------------
+function algoliaParamsToObject(req) {
+  if (typeof req.params === 'string') {
+    const o = {};
+    for (const [k, v] of new URLSearchParams(req.params)) {
+      try { o[k] = JSON.parse(v); } catch { o[k] = v; }
+    }
+    return o;
+  }
+  const { indexName, ...rest } = req;
+  return rest;
+}
+
+function objectToAlgoliaParams(o) {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(o)) sp.set(k, typeof v === 'string' ? v : JSON.stringify(v));
+  return sp.toString();
+}
+
+async function collectNintendo() {
+  const page = await newPage();
+  const captured = [];
+  page.on('request', req => {
+    const u = req.url();
+    if (!/algolia/i.test(u) || req.method() !== 'POST') return;
+    try {
+      const url = new URL(u);
+      const h = req.headers();
+      const appId = h['x-algolia-application-id'] || url.searchParams.get('x-algolia-application-id');
+      const apiKey = h['x-algolia-api-key'] || url.searchParams.get('x-algolia-api-key');
+      const body = JSON.parse(req.postData() || '{}');
+      for (const r of body.requests || []) captured.push({ appId, apiKey, indexName: r.indexName, params: algoliaParamsToObject(r) });
+    } catch { /* ignora */ }
+  });
+
+  const pagesToTry = [
+    'https://www.nintendo.com/pt-br/store/sales-and-deals/',
+    'https://www.nintendo.com/pt-br/store/games/',
+    'https://www.nintendo.com/us/store/sales-and-deals/',
+  ];
+  for (const u of pagesToTry) {
+    try {
+      await page.goto(u, { waitUntil: 'networkidle', timeout: 60000 });
+      await page.mouse.wheel(0, 3000);
+      await sleep(3000);
+    } catch (e) { console.warn('   nintendo goto:', e.message); }
+    if (captured.some(c => c.appId && c.apiKey)) break;
+  }
+  await dump(page, 'nintendo');
+  await page.context().close();
+
+  const good = captured.filter(c => c.appId && c.apiKey && c.indexName && /game/i.test(c.indexName));
+  if (good.length === 0) throw new Error('não achei a busca Algolia da Nintendo (veja debug/nintendo.png)');
+  const base = good[0];
+  console.log(`   Algolia Nintendo: app=${base.appId} índice=${base.indexName}`);
+
+  const endpoint = `https://${base.appId}-dsn.algolia.net/1/indexes/*/queries`;
+  const headers = { 'x-algolia-application-id': base.appId, 'x-algolia-api-key': base.apiKey, 'content-type': 'application/json', Referer: 'https://www.nintendo.com/' };
+  const keepParams = { ...base.params };
+  delete keepParams.page; delete keepParams.hitsPerPage; delete keepParams.analytics; delete keepParams.clickAnalytics;
+
+  async function query(extra) {
+    const body = { requests: [{ indexName: base.indexName, params: objectToAlgoliaParams({ ...keepParams, ...extra }) }] };
+    const j = await fetchJson(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
+    return j.results?.[0] || {};
+  }
+
+  async function allHits(extraFilters = []) {
+    const hits = [];
+    const ff = [...(Array.isArray(keepParams.facetFilters) ? keepParams.facetFilters : []), ...extraFilters];
+    for (let p = 0; p < 10; p++) {
+      const r = await query({ hitsPerPage: 100, page: p, facetFilters: ff });
+      hits.push(...(r.hits || []));
+      if (p + 1 >= (r.nbPages || 0)) break;
+    }
+    return hits;
+  }
+
+  // A Algolia só entrega 1000 resultados por busca: se houver mais, divide pela faceta com mais valores
+  const probe = await query({ hitsPerPage: 0, facets: ['*'], maxValuesPerFacet: 200 });
+  let hits = [];
+  if ((probe.nbHits || 0) <= 1000) {
+    hits = await allHits();
+  } else {
+    const facets = Object.entries(probe.facets || {})
+      .filter(([, vals]) => Object.values(vals).every(c => c <= 1000) && Object.keys(vals).length > 1)
+      .sort((a, b) => Object.values(b[1]).reduce((x, y) => x + y, 0) - Object.values(a[1]).reduce((x, y) => x + y, 0));
+    if (facets.length === 0) hits = await allHits();
+    else {
+      const [facetName, vals] = facets[0];
+      console.log(`   ${probe.nbHits} jogos — dividindo por "${facetName}" (${Object.keys(vals).length} grupos)`);
+      for (const v of Object.keys(vals)) hits.push(...await allHits([`${facetName}:${v}`]));
+    }
+  }
+
+  const byNsuid = new Map();
+  for (const h of hits) if (h.nsuid && /^7001/.test(String(h.nsuid))) byNsuid.set(String(h.nsuid), h);
+  console.log(`   jogos Nintendo encontrados: ${byNsuid.size} — consultando preço BR oficial...`);
+
+  const rows = [];
+  for (const group of chunk([...byNsuid.keys()], 50)) {
+    let j;
+    try { j = await fetchJson(`https://api.ec.nintendo.com/v1/price?country=BR&lang=pt&ids=${group.join(',')}`); } catch (e) { console.warn('   preço nintendo:', e.message); continue; }
+    for (const pr of j.prices || []) {
+      if (!pr.discount_price || pr.sales_status !== 'onsale') continue;
+      const h = byNsuid.get(String(pr.title_id));
+      if (!h) continue;
+      const regular = parseFloat(pr.regular_price?.raw_value);
+      const sale = parseFloat(pr.discount_price?.raw_value);
+      if (Number.isNaN(regular) || Number.isNaN(sale)) continue;
+      const imgId = h.horizontalHeaderImage || h.productImage || h.boxart;
+      const img = !imgId ? null : /^https?:/.test(imgId) ? imgId
+        : `https://assets.nintendo.com/image/upload/ar_16:9,c_lpad,w_480/b_white/f_auto/q_auto/${imgId}`;
+      const path = h.url || '';
+      rows.push(baseRow('nintendo', {
+        id: `nintendo:${pr.title_id}`,
+        title: h.title,
+        store: 'nintendo',
+        platform: 'switch',
+        category: /dlc|pack|expansion|season pass|passe/i.test(h.topLevelCategory || h.productType || '') ? 'dlc' : 'game_deal',
+        original_price: regular,
+        discount_price: sale,
+        image_url: img,
+        deal_url: path ? `https://www.nintendo.com${path.replace('/us/', '/pt-br/')}` : 'https://www.nintendo.com/pt-br/store/sales-and-deals/',
+        expires_at: pr.discount_price.end_datetime || null,
+      }));
+    }
+    await sleep(200);
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------
+// 5) PlayStation — usa a mesma API (GraphQL) que a PS Store BR usa
+// ---------------------------------------------------------------------
+function walk(obj, fn, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 25) return;
+  fn(obj);
+  for (const v of Array.isArray(obj) ? obj : Object.values(obj)) walk(v, fn, depth + 1);
+}
+
+function psRowsFrom(json, seen) {
+  const rows = [];
+  walk(json, o => {
+    if (!o.id || !o.name || !o.price || typeof o.price !== 'object') return;
+    if (seen.has(o.id)) return;
+    const pr = o.price;
+    if (pr.isTiedToSubscription) return; // desconto só para PS Plus
+    const base = parseMoney(pr.basePrice);
+    const sale = parseMoney(pr.discountedPrice);
+    if (base == null || sale == null || !(sale < base)) return;
+    seen.add(o.id);
+    const media = o.media || [];
+    const img = (media.find(m => m.role === 'BACKGROUND') || media.find(m => m.role === 'GAMEHUB_COVER_ART') || media.find(m => m.role === 'MASTER') || media.find(m => m.type === 'IMAGE'))?.url;
+    rows.push(baseRow('playstation', {
+      id: `playstation:${o.id}`,
+      title: o.name,
+      store: 'playstation',
+      platform: 'ps',
+      category: /add.?on|dlc|pacote|season|expans/i.test(`${o.storeDisplayClassification || ''} ${o.localizedStoreDisplayClassification || ''}`) ? 'dlc' : 'game_deal',
+      original_price: base,
+      discount_price: sale,
+      image_url: img ? `${img}?w=480` : null,
+      deal_url: `https://store.playstation.com/pt-br/product/${o.id}`,
+      expires_at: pr.endTime ? new Date(Number(pr.endTime)).toISOString() : null,
+      currency: 'BRL',
+    }));
+  });
+  return rows;
+}
+
+async function collectPlayStation() {
+  const page = await newPage();
+  const gridReqs = [];
+  const seen = new Set();
+  let rows = [];
+  page.on('request', req => {
+    const u = req.url();
+    if (u.includes('/api/graphql/v1') && u.includes('categoryGridRetrieve')) gridReqs.push({ url: u, headers: req.headers() });
+  });
+  page.on('response', async res => {
+    if (!res.url().includes('/api/graphql/v1')) return;
+    try { rows.push(...psRowsFrom(await res.json(), seen)); } catch { /* ignora */ }
+  });
+
+  await page.goto('https://store.playstation.com/pt-br/pages/deals', { waitUntil: 'networkidle', timeout: 60000 }).catch(e => console.warn('   ps goto:', e.message));
+  await sleep(2000);
+  const catIds = [...new Set((await page.$$eval('a[href*="/category/"]', as => as.map(a => a.getAttribute('href'))).catch(() => []))
+    .map(h => (h.match(/category\/([0-9a-f-]{36})/) || [])[1]).filter(Boolean))];
+  console.log(`   categorias de ofertas na PS Store: ${catIds.length}`);
+  if (catIds.length === 0) { await dump(page, 'playstation'); }
+
+  // Abre a 1ª categoria para "aprender" a chamada da API
+  if (catIds.length && gridReqs.length === 0) {
+    await page.goto(`https://store.playstation.com/pt-br/category/${catIds[0]}/1`, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
+    await sleep(2000);
+  }
+
+  if (gridReqs.length) {
+    const tpl = new URL(gridReqs[0].url);
+    const hdrs = Object.fromEntries(Object.entries(gridReqs[0].headers).filter(([k]) => /^(x-psn|apollo|content-type|accept-language)/i.test(k)));
+    for (const cat of catIds) {
+      for (let offset = 0; offset < 3000; offset += 100) {
+        const vars = JSON.parse(tpl.searchParams.get('variables') || '{}');
+        vars.id = cat;
+        vars.pageArgs = { size: 100, offset };
+        const u = new URL(tpl);
+        u.searchParams.set('variables', JSON.stringify(vars));
+        const json = await page.evaluate(async ({ url, headers }) => {
+          try { const r = await fetch(url, { headers, credentials: 'include' }); return await r.json(); } catch (e) { return null; }
+        }, { url: u.toString(), headers: hdrs });
+        const grid = json?.data?.categoryGridRetrieve;
+        rows.push(...psRowsFrom(json, seen));
+        const total = grid?.pageInfo?.totalCount ?? 0;
+        if (!grid || !(grid.products || []).length || offset + 100 >= total) break;
+        await sleep(300);
+      }
+    }
+  } else {
+    // Plano B: navega página por página e captura o que o site carregar
+    console.log('   (plano B) navegando pelas páginas das categorias');
+    for (const cat of catIds.slice(0, 8)) {
+      for (let n = 1; n <= 15; n++) {
+        const before = rows.length;
+        await page.goto(`https://store.playstation.com/pt-br/category/${cat}/${n}`, { waitUntil: 'networkidle', timeout: 45000 }).catch(() => {});
+        const nextData = await page.$eval('#__NEXT_DATA__', el => el.textContent).catch(() => null);
+        if (nextData) { try { rows.push(...psRowsFrom(JSON.parse(nextData), seen)); } catch { /* ignora */ } }
+        if (rows.length === before) break;
+      }
+    }
+  }
+  if (rows.length === 0) await dump(page, 'playstation');
+  await page.context().close();
+  return rows;
+}
+
+// ---------------------------------------------------------------------
+// 6) Gift cards — Nuuvem e Instant Gaming (leitura genérica dos cards da página)
+// ---------------------------------------------------------------------
+async function scrapeCards(page, linkPattern) {
+  return page.evaluate((pattern) => {
+    const re = new RegExp(pattern);
+    const out = [];
+    const seen = new Set();
+    for (const a of document.querySelectorAll('a[href]')) {
+      const href = a.href;
+      if (!re.test(href) || seen.has(href)) continue;
+      let card = a;
+      for (let i = 0; i < 6 && card.parentElement; i++) {
+        if (/(R\$|€|\$)\s*\d/.test(card.innerText || '')) break;
+        card = card.parentElement;
+      }
+      const text = card.innerText || '';
+      const prices = text.match(/(R\$|€|US\$|\$)\s*\d[\d.,]*/g) || [];
+      if (!prices.length) continue;
+      seen.add(href);
+      const img = card.querySelector('img');
+      const title = (card.querySelector('[class*="title" i], h2, h3, h4')?.innerText || a.title || img?.alt || a.innerText || '').trim().split('\n')[0];
+      const disc = (text.match(/-\s?(\d{1,2})\s?%/) || [])[1];
+      out.push({
+        href, title, prices,
+        discount: disc ? Number(disc) : 0,
+        img: img ? (img.currentSrc || img.src || img.getAttribute('data-src')) : null,
+      });
+    }
+    return out;
+  }, linkPattern.source);
+}
+
+async function cardsToRows(cards, { source, store }) {
+  const rows = [];
+  for (const c of cards) {
+    if (!c.title || c.title.length < 3) continue;
+    const { isGift } = classifyGiftCard(c.title);
+    const values = c.prices.map(p => ({ v: parseMoney(p), cur: p.includes('R$') ? 'BRL' : p.includes('€') ? 'EUR' : 'USD' })).filter(x => x.v != null);
+    if (!values.length) continue;
+    const cur = values[0].cur;
+    const nums = values.map(x => x.v).sort((a, b) => a - b);
+    let sale = nums[0];
+    let orig = nums.length > 1 ? nums[nums.length - 1] : (c.discount ? sale / (1 - c.discount / 100) : sale);
+    const s = await toBRL(sale, cur);
+    const o = await toBRL(orig, cur);
+    rows.push(baseRow(source, {
+      id: `${store}:${slugify(c.href.split('?')[0].split('/').filter(Boolean).pop())}`,
+      title: c.title,
+      store,
+      platform: isGift ? 'giftcard' : 'pc',
+      category: isGift ? 'gift_card' : 'game_deal',
+      original_price: o.value,
+      discount_price: s.value,
+      discount_pct: c.discount || pct(o.value, s.value),
+      currency: s.currency,
+      image_url: c.img && !c.img.startsWith('data:') ? c.img : null,
+      deal_url: c.href,
+    }));
+  }
+  return rows;
+}
+
+async function collectNuuvemGiftCards() {
+  const page = await newPage();
+  const rows = [];
+  const terms = ['gift card', 'cartão presente', 'playstation store', 'xbox', 'nintendo eshop', 'steam'];
+  for (const t of terms) {
+    const url = `https://www.nuuvem.com/br-pt/catalog/search/${encodeURIComponent(t)}`;
+    try {
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+      await page.mouse.wheel(0, 4000);
+      await sleep(1500);
+      const cards = await scrapeCards(page, /nuuvem\.com\/br-pt\/item\//);
+      const r = (await cardsToRows(cards, { source: 'nuuvem_gift', store: 'nuuvem' })).filter(x => x.category === 'gift_card');
+      console.log(`   nuuvem "${t}": ${cards.length} cards, ${r.length} gift cards`);
+      rows.push(...r);
+    } catch (e) { console.warn(`   nuuvem "${t}":`, e.message); }
+  }
+  if (rows.length === 0) await dump(page, 'nuuvem');
+  await page.context().close();
+  return rows;
+}
+
+async function collectInstantGaming() {
+  const page = await newPage();
+  const rows = [];
+  const targets = [
+    { url: 'https://www.instant-gaming.com/pt/pesquisar/?q=gift%20card', giftOnly: true },
+    { url: 'https://www.instant-gaming.com/pt/pesquisar/?q=psn', giftOnly: true },
+    { url: 'https://www.instant-gaming.com/pt/pesquisar/?q=xbox%20live', giftOnly: true },
+    { url: 'https://www.instant-gaming.com/pt/pesquisar/?q=nintendo%20eshop', giftOnly: true },
+    { url: 'https://www.instant-gaming.com/pt/pesquisar/?sort_by=bestsellers_desc', giftOnly: false },
+    { url: 'https://www.instant-gaming.com/pt/pesquisar/?sort_by=bestsellers_desc&page=2', giftOnly: false },
+    { url: 'https://www.instant-gaming.com/pt/pesquisar/?sort_by=bestsellers_desc&page=3', giftOnly: false },
+  ];
+  for (const t of targets) {
+    try {
+      await page.goto(t.url, { waitUntil: 'networkidle', timeout: 45000 });
+      await sleep(1500);
+      const cards = await scrapeCards(page, /instant-gaming\.com\/pt\/\d+-/);
+      let r = await cardsToRows(cards, { source: 'instant_gaming', store: 'instant_gaming' });
+      if (t.giftOnly) r = r.filter(x => x.category === 'gift_card');
+      console.log(`   instant gaming ${t.url.split('?')[1]}: ${cards.length} cards, ${r.length} usados`);
+      rows.push(...r);
+    } catch (e) { console.warn('   instant gaming:', e.message); }
+  }
+  if (rows.length === 0) await dump(page, 'instant_gaming');
+  await page.context().close();
+  return rows;
+}
+
+// ---------------------------------------------------------------------
+// Execução
+// ---------------------------------------------------------------------
+const SOURCES = [
+  { name: 'itad', label: 'PC (Steam/Epic/Nuuvem/Humble)', fn: collectItad, timeout: 15 * 60e3 },
+  { name: 'epic_free', label: 'Epic grátis', fn: collectEpicFree, timeout: 60e3 },
+  { name: 'xbox', label: 'Xbox', fn: collectXbox, timeout: 10 * 60e3 },
+  { name: 'nintendo', label: 'Nintendo', fn: collectNintendo, timeout: 12 * 60e3 },
+  { name: 'playstation', label: 'PlayStation', fn: collectPlayStation, timeout: 12 * 60e3 },
+  { name: 'nuuvem_gift', label: 'Gift cards Nuuvem', fn: collectNuuvemGiftCards, timeout: 6 * 60e3 },
+  { name: 'instant_gaming', label: 'Instant Gaming', fn: collectInstantGaming, timeout: 6 * 60e3 },
+];
+
+async function save(rows) {
+  const unique = [...new Map(rows.filter(r => r.id && r.title && r.deal_url).map(r => [r.id, r])).values()];
+  for (const part of chunk(unique, 500)) {
+    const { error } = await supabase.from('deals').upsert(part, { onConflict: 'id' });
+    if (error) throw new Error(`Supabase: ${error.message}`);
+  }
+  return unique.length;
+}
+
+async function main() {
+  console.log(`=== LC Deals — início ${RUN_STARTED} ===`);
+  const summary = [];
+  for (const s of SOURCES) {
+    if (ONLY.length && !ONLY.includes(s.name)) continue;
+    console.log(`\n-> ${s.label}`);
+    let ok = false; let count = 0; let message = null;
+    try {
+      const rows = await withTimeout(s.fn(), s.timeout, s.label);
+      count = await save(rows);
+      ok = count > 0;
+      if (!ok) message = 'nenhuma oferta encontrada (veja os arquivos de debug)';
+      if (ok) {
+        // Remove o que a loja não tem mais em promoção (só se a coleta deu certo)
+        const { error } = await supabase.from('deals').delete().eq('source', s.name).lt('last_seen_at', RUN_STARTED);
+        if (error) console.warn('   limpeza:', error.message);
+      }
+    } catch (e) {
+      message = e.message;
+    }
+    console.log(ok ? `   OK: ${count} ofertas salvas` : `   FALHOU: ${message}`);
+    summary.push({ source: s.name, ok, count, message, ran_at: new Date().toISOString() });
+    await supabase.from('sync_runs').upsert(summary[summary.length - 1], { onConflict: 'source' });
+  }
+  if (browser) await browser.close();
+
+  console.log('\n=== RESUMO ===');
+  for (const r of summary) console.log(`${r.ok ? '✔' : '✘'} ${r.source.padEnd(15)} ${String(r.count).padStart(6)}  ${r.message || ''}`);
+  // Só marca o workflow como erro se TUDO falhou
+  if (summary.length && summary.every(r => !r.ok)) process.exit(1);
+}
+
+main().catch(e => { console.error(e); process.exit(1); });

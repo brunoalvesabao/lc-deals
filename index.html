@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LC Deals</title>
+<meta name="theme-color" content="#0d1117">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #2a3240;
+    --text: #e6edf3; --muted: #8b96a5; --accent: #7c5cff; --accent2: #a48bff;
+    --good: #2ecc71; --hot: #ff4d6d; --warn: #f5b942;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; }
+  body { padding-bottom: 60px; }
+  a { color: inherit; text-decoration: none; }
+  button, select, input { font: inherit; color: inherit; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 16px; }
+
+  header { position: sticky; top: 0; z-index: 20; background: rgba(13,17,23,.94); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .top { display: flex; gap: 12px; align-items: center; padding: 12px 0; flex-wrap: wrap; }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: -.02em; display: flex; align-items: center; gap: 8px; }
+  .logo b { background: var(--accent); color: #fff; border-radius: 8px; padding: 2px 8px; }
+  .search { flex: 1 1 260px; position: relative; }
+  .search input { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; outline: none; }
+  .search input:focus { border-color: var(--accent); }
+  .mine { display: flex; gap: 6px; }
+  .mine button, .sel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; cursor: pointer; white-space: nowrap; }
+  .mine button.on { border-color: var(--accent); background: #251f45; }
+  .count { font-size: 12px; background: var(--panel2); border-radius: 6px; padding: 1px 6px; margin-left: 4px; }
+
+  .tabs, .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 10px; }
+  .tabs::-webkit-scrollbar, .chips::-webkit-scrollbar { display: none; }
+  .tab { background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px; color: var(--muted); font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .tab.on { color: var(--text); border-color: var(--accent); }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; color: var(--muted); }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .row2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-bottom: 10px; font-size: 13px; color: var(--muted); }
+  .row2 label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+
+  .status { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; font-size: 12px; }
+  .st { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; color: var(--muted); }
+  .st.ok b { color: var(--good); } .st.bad b { color: var(--hot); }
+  .summary { color: var(--muted); font-size: 13px; margin: 6px 0 14px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; cursor: pointer; transition: transform .12s, border-color .12s; }
+  .card:hover { transform: translateY(-2px); border-color: #3b4558; }
+  .card.wish { border-color: var(--hot); }
+  .card.target { box-shadow: 0 0 0 2px var(--good); }
+  .thumb { position: relative; aspect-ratio: 16 / 9; background: var(--panel2); overflow: hidden; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 28px; color: rgba(255,255,255,.85); text-align: center; padding: 10px; }
+  .badge { position: absolute; font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 6px; }
+  .b-off { top: 8px; right: 8px; background: var(--good); color: #062; }
+  .b-free { top: 8px; right: 8px; background: var(--good); color: #062; }
+  .b-low { bottom: 8px; left: 8px; background: var(--hot); color: #fff; }
+  .b-soon { top: 8px; right: 8px; background: var(--warn); color: #3a2a00; }
+  .acts { position: absolute; bottom: 8px; right: 8px; display: flex; gap: 6px; }
+  .acts button { width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); cursor: pointer; font-size: 14px; }
+  .acts button.on { background: #fff; }
+  .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .title { font-weight: 600; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .meta { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 2px 6px; border-radius: 5px; background: var(--panel2); color: var(--muted); }
+  .price { margin-top: auto; display: flex; align-items: baseline; gap: 8px; }
+  .now { font-size: 18px; font-weight: 800; }
+  .was { font-size: 12px; color: var(--muted); text-decoration: line-through; }
+  .approx { font-size: 11px; color: var(--warn); }
+  .more { font-size: 12px; color: var(--accent2); }
+
+  .empty { text-align: center; color: var(--muted); padding: 60px 10px; border: 1px dashed var(--line); border-radius: var(--radius); }
+  #sentinel { height: 40px; }
+  .loadmore { display: block; margin: 20px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 18px; cursor: pointer; }
+
+  /* modal */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none; align-items: flex-end; justify-content: center; z-index: 50; }
+  .modal.open { display: flex; }
+  .sheet { background: var(--panel); width: 100%; max-width: 720px; max-height: 90vh; overflow: auto; border-radius: 16px 16px 0 0; border: 1px solid var(--line); }
+  @media (min-width: 720px) { .modal { align-items: center; } .sheet { border-radius: 16px; } }
+  .sheet .thumb { aspect-ratio: 16 / 7; }
+  .sheet-body { padding: 16px; }
+  .sheet h2 { margin: 0 0 6px; font-size: 20px; }
+  .offers { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+  .offers td { padding: 10px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+  .offers .go { background: var(--accent); color: #fff; border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 13px; white-space: nowrap; }
+  .close { position: sticky; top: 0; float: right; margin: 10px; background: rgba(0,0,0,.6); border: 0; border-radius: 50%; width: 34px; height: 34px; cursor: pointer; font-size: 18px; z-index: 2; }
+  .target-box { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 14px; flex-wrap: wrap; }
+  .target-box input { width: 110px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 40px; }
+  footer a { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="top">
+      <div class="logo"><b>LC</b> Deals</div>
+      <div class="search"><input id="q" type="search" placeholder="Buscar jogo ou gift card…" autocomplete="off"></div>
+      <select id="sort" class="sel" aria-label="Ordenar">
+        <option value="hot">Destaques</option>
+        <option value="discount">Maior desconto</option>
+        <option value="price">Menor preço</option>
+        <option value="new">Novidades</option>
+        <option value="ending">Acabando</option>
+        <option value="az">A–Z</option>
+      </select>
+      <div class="mine">
+        <button data-tab="wishlist">♥ Wishlist<span class="count" id="wishCount">0</span></button>
+        <button data-tab="collection">🎮 Coleção<span class="count" id="collCount">0</span></button>
+      </div>
+    </div>
+    <div class="tabs" id="tabs">
+      <button class="tab on" data-tab="deals">Ofertas</button>
+      <button class="tab" data-tab="free">Grátis</button>
+      <button class="tab" data-tab="gift">Gift cards</button>
+      <button class="tab" data-tab="bundle">Bundles</button>
+      <button class="tab" data-tab="lowest">Menor preço histórico</button>
+    </div>
+    <div class="chips" id="platforms"></div>
+    <div class="chips" id="stores"></div>
+    <div class="row2">
+      <select id="maxPrice" class="sel" aria-label="Preço máximo">
+        <option value="">Qualquer preço</option>
+        <option value="10">Até R$ 10</option>
+        <option value="25">Até R$ 25</option>
+        <option value="50">Até R$ 50</option>
+        <option value="100">Até R$ 100</option>
+      </select>
+      <select id="minOff" class="sel" aria-label="Desconto mínimo">
+        <option value="0">Qualquer desconto</option>
+        <option value="50">50% ou mais</option>
+        <option value="75">75% ou mais</option>
+        <option value="90">90% ou mais</option>
+      </select>
+      <label><input type="checkbox" id="dlc"> Mostrar DLCs</label>
+      <label><input type="checkbox" id="hideOwned" checked> Ocultar o que já tenho</label>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="status" id="status"></div>
+  <div class="summary" id="summary">Carregando ofertas…</div>
+  <div class="grid" id="grid"></div>
+  <div id="sentinel"></div>
+  <footer>Preços de PC fornecidos pela API do <a href="https://isthereanydeal.com" target="_blank" rel="noopener">IsThereAnyDeal</a>. Consoles direto das lojas oficiais (Nintendo, Microsoft, Sony). Uso pessoal.</footer>
+</main>
+
+<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
+
+<script>
+// ======================================================================
+// Configuração — cole aqui a URL e a chave "anon public" do Supabase
+// ======================================================================
+const SUPABASE_URL = 'https://qnejqlblwzwrfvbsvean.supabase.co';
+const SUPABASE_ANON_KEY = 'COLE_SUA_CHAVE_ANON_AQUI';
+
+const STORES = {
+  steam:          { label: 'Steam',          color: '#1b5e8c' },
+  epic:           { label: 'Epic Games',     color: '#3a3a3a' },
+  nuuvem:         { label: 'Nuuvem',         color: '#0e8fa8' },
+  humble:         { label: 'Humble',         color: '#a8323e' },
+  instant_gaming: { label: 'Instant Gaming', color: '#d9661a' },
+  nintendo:       { label: 'Nintendo eShop', color: '#e60012' },
+  xbox:           { label: 'Xbox',           color: '#107c10' },
+  playstation:    { label: 'PS Store',       color: '#0070d1' },
+  outras:         { label: 'Outras',         color: '#555' },
+};
+const PLATFORMS = { all: 'Todas', pc: 'PC', switch: 'Switch', xbox: 'Xbox', ps: 'PlayStation', giftcard: 'Gift cards' };
+const PAGE = 60;
+
+const state = { tab: 'deals', platform: 'all', store: 'all', q: '', sort: 'hot', maxPrice: '', minOff: 0, dlc: false, hideOwned: true, shown: PAGE };
+let rows = [];          // todas as ofertas (uma por loja)
+let dlcLoaded = false;
+let groups = [];        // resultado filtrado e agrupado por jogo
+
+// ---------- armazenamento local (wishlist / coleção) ----------
+function load(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
+function persist(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* modo privado */ } }
+let wishlist = load('lc_wish_v2', {});      // { game_key: precoAlvo | null }
+let collection = load('lc_coll_v2', {});    // { game_key: true }
+
+// ---------- utilidades ----------
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const brl = v => v == null ? '—' : Number(v) === 0 ? 'Grátis' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const initials = t => String(t).replace(/[^A-Za-z0-9 ]/g, '').split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+function hue(t) { let h = 0; for (const c of String(t)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+function ago(iso) {
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  return m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`;
+}
+function until(iso) {
+  if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d)) return '';
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
+// Imagem com fallback: se a capa quebrar, mostra um bloco colorido com as iniciais
+function thumbHTML(r, extra = '') {
+  const ph = `<div class="ph" style="background:linear-gradient(135deg,hsl(${hue(r.title)} 45% 28%),hsl(${(hue(r.title) + 40) % 360} 50% 18%))">${esc(initials(r.title))}</div>`;
+  const img = r.image_url ? `<img src="${esc(r.image_url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
+  return `<div class="thumb">${ph}${img}${extra}</div>`;
+}
+
+// ---------- dados ----------
+let sb = null;
+async function fetchAll(query) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await query().range(from, from + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+const COLS = 'id,game_key,title,store,platform,category,original_price,discount_price,discount_pct,currency,history_low,own_low,is_lowest_ever,image_url,deal_url,expires_at,first_seen_at';
+
+async function loadData() {
+  if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.includes('COLE_SUA')) {
+    document.getElementById('summary').textContent = 'Falta colar a chave anon do Supabase no index.html.';
+    return;
+  }
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  try {
+    const [deals, runs] = await Promise.all([
+      fetchAll(() => sb.from('deals').select(COLS).neq('category', 'dlc').order('id')),
+      sb.from('sync_runs').select('*'),
+    ]);
+    rows = deals;
+    renderStatus(runs.data || []);
+  } catch (e) {
+    document.getElementById('summary').textContent = 'Erro ao ler o Supabase: ' + (e.message || e);
+    return;
+  }
+  buildChips();
+  apply();
+}
+
+async function loadDlc() {
+  if (dlcLoaded || !sb) return;
+  document.getElementById('summary').textContent = 'Carregando DLCs…';
+  try { rows.push(...await fetchAll(() => sb.from('deals').select(COLS).eq('category', 'dlc').order('id'))); dlcLoaded = true; }
+  catch (e) { console.warn(e); }
+}
+
+function renderStatus(runs) {
+  const names = { itad: 'PC', epic_free: 'Epic grátis', xbox: 'Xbox', nintendo: 'Nintendo', playstation: 'PlayStation', nuuvem_gift: 'Gift Nuuvem', instant_gaming: 'Instant Gaming' };
+  document.getElementById('status').innerHTML = runs
+    .sort((a, b) => (names[a.source] || a.source).localeCompare(names[b.source] || b.source))
+    .map(r => `<span class="st ${r.ok ? 'ok' : 'bad'}" title="${esc(r.message || '')}"><b>${r.ok ? '●' : '●'}</b> ${esc(names[r.source] || r.source)} · ${r.ok ? r.count : 'falhou'} · ${ago(r.ran_at)}</span>`)
+    .join('');
+}
+
+// ---------- filtros e agrupamento ----------
+function rowPasses(r) {
+  if (!state.dlc && r.category === 'dlc') return false;
+  if (state.platform !== 'all' && r.platform !== state.platform) return false;
+  if (state.store !== 'all' && r.store !== state.store) return false;
+  if (state.maxPrice !== '' && Number(r.discount_price) > Number(state.maxPrice)) return false;
+  if (state.minOff && Number(r.discount_pct || 0) < state.minOff) return false;
+  switch (state.tab) {
+    case 'deals': return r.category === 'game_deal' || r.category === 'dlc';
+    case 'free': return r.category === 'free_game' || r.category === 'free_upcoming';
+    case 'gift': return r.category === 'gift_card';
+    case 'bundle': return r.category === 'bundle';
+    case 'lowest': return r.is_lowest_ever && r.category !== 'gift_card';
+    default: return true; // wishlist / coleção filtram depois, por jogo
+  }
+}
+
+function apply() {
+  const q = state.q.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const map = new Map();
+  for (const r of rows) {
+    if (!rowPasses(r)) continue;
+    if (q && !(r.game_key.includes(q) || r.title.toLowerCase().includes(q))) continue;
+    const k = r.category === 'bundle' || r.category === 'gift_card' ? r.id : r.game_key || r.id;
+    if (!map.has(k)) map.set(k, { key: k, offers: [] });
+    map.get(k).offers.push(r);
+  }
+  groups = [...map.values()].map(g => {
+    g.offers.sort((a, b) => Number(a.discount_price) - Number(b.discount_price));
+    g.best = g.offers[0];
+    g.maxOff = Math.max(...g.offers.map(o => o.discount_pct || 0));
+    g.lowest = g.offers.some(o => o.is_lowest_ever);
+    return g;
+  }).filter(g => {
+    if (state.tab === 'wishlist') return g.key in wishlist;
+    if (state.tab === 'collection') return !!collection[g.key];
+    if (state.hideOwned && collection[g.key]) return false;
+    return true;
+  });
+
+  const by = {
+    hot: (a, b) => (b.lowest - a.lowest) || (b.maxOff - a.maxOff) || (Number(a.best.discount_price) - Number(b.best.discount_price)),
+    discount: (a, b) => b.maxOff - a.maxOff,
+    price: (a, b) => Number(a.best.discount_price) - Number(b.best.discount_price),
+    new: (a, b) => new Date(b.best.first_seen_at) - new Date(a.best.first_seen_at),
+    ending: (a, b) => (new Date(a.best.expires_at || '9999-12-31')) - (new Date(b.best.expires_at || '9999-12-31')),
+    az: (a, b) => a.best.title.localeCompare(b.best.title, 'pt-BR'),
+  }[state.sort];
+  groups.sort(by);
+  state.shown = PAGE;
+  render();
+}
+
+// ---------- renderização ----------
+function cardHTML(g) {
+  const r = g.best;
+  const free = Number(r.discount_price) === 0;
+  const stores = [...new Set(g.offers.map(o => o.store))];
+  const plats = [...new Set(g.offers.map(o => o.platform))].filter(p => p !== 'giftcard');
+  const target = wishlist[g.key];
+  const hitTarget = target != null && Number(r.discount_price) <= Number(target);
+  let badge = '';
+  if (r.category === 'free_upcoming') badge = `<span class="badge b-soon">GRÁTIS ${esc(until(r.expires_at))}</span>`;
+  else if (free) badge = '<span class="badge b-free">GRÁTIS</span>';
+  else if (r.discount_pct > 0) badge = `<span class="badge b-off">-${r.discount_pct}%</span>`;
+  const low = g.lowest ? '<span class="badge b-low">MENOR PREÇO</span>' : '';
+  const acts = `<div class="acts">
+      <button data-act="wish" data-key="${esc(g.key)}" class="${g.key in wishlist ? 'on' : ''}" title="Wishlist" aria-label="Wishlist">${g.key in wishlist ? '❤️' : '🤍'}</button>
+      <button data-act="coll" data-key="${esc(g.key)}" class="${collection[g.key] ? 'on' : ''}" title="Já tenho" aria-label="Coleção">🎮</button>
+    </div>`;
+  return `<article class="card ${g.key in wishlist ? 'wish' : ''} ${hitTarget ? 'target' : ''}" data-key="${esc(g.key)}">
+    ${thumbHTML(r, badge + low + acts)}
+    <div class="body">
+      <div class="title">${esc(r.title)}</div>
+      <div class="meta">
+        ${stores.map(s => `<span class="tag" style="background:${(STORES[s] || STORES.outras).color};color:#fff">${esc((STORES[s] || { label: s }).label)}</span>`).join('')}
+        ${plats.map(p => `<span class="tag">${esc(PLATFORMS[p] || p)}</span>`).join('')}
+      </div>
+      <div class="price">
+        <span class="now">${brl(r.discount_price)}</span>
+        ${r.original_price && Number(r.original_price) > Number(r.discount_price) ? `<span class="was">${brl(r.original_price)}</span>` : ''}
+        ${r.currency && r.currency !== 'BRL' ? '<span class="approx" title="Convertido de outra moeda">≈</span>' : ''}
+      </div>
+      ${g.offers.length > 1 ? `<div class="more">+${g.offers.length - 1} oferta(s) em outras lojas</div>` : ''}
+    </div>
+  </article>`;
+}
+
+function render() {
+  const grid = document.getElementById('grid');
+  const total = groups.length;
+  document.getElementById('summary').textContent = total
+    ? `${total.toLocaleString('pt-BR')} jogos/itens · ${rows.length.toLocaleString('pt-BR')} ofertas no banco`
+    : '';
+  if (!total) {
+    const msg = state.tab === 'wishlist' ? 'Sua wishlist está vazia. Toque no 🤍 de um jogo.'
+      : state.tab === 'collection' ? 'Nenhum jogo marcado como "já tenho".'
+      : 'Nada encontrado com esses filtros.';
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${msg}</div>`;
+    return;
+  }
+  grid.innerHTML = groups.slice(0, state.shown).map(cardHTML).join('');
+}
+
+function renderMore() {
+  if (state.shown >= groups.length) return;
+  const grid = document.getElementById('grid');
+  const next = groups.slice(state.shown, state.shown + PAGE);
+  state.shown += PAGE;
+  grid.insertAdjacentHTML('beforeend', next.map(cardHTML).join(''));
+}
+
+function buildChips() {
+  const plat = document.getElementById('platforms');
+  plat.innerHTML = Object.entries(PLATFORMS).map(([k, v]) => `<button class="chip ${state.platform === k ? 'on' : ''}" data-platform="${k}">${v}</button>`).join('');
+  const present = [...new Set(rows.map(r => r.store))].sort((a, b) => (STORES[a]?.label || a).localeCompare(STORES[b]?.label || b));
+  document.getElementById('stores').innerHTML = [`<button class="chip ${state.store === 'all' ? 'on' : ''}" data-store="all">Todas as lojas</button>`]
+    .concat(present.map(s => `<button class="chip ${state.store === s ? 'on' : ''}" data-store="${esc(s)}">${esc((STORES[s] || { label: s }).label)}</button>`)).join('');
+}
+
+function setTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  apply();
+}
+
+function updateCounts() {
+  document.getElementById('wishCount').textContent = Object.keys(wishlist).length;
+  document.getElementById('collCount').textContent = Object.keys(collection).length;
+}
+
+// ---------- detalhes do jogo (todas as lojas, sem filtro) ----------
+function openDetails(key) {
+  const offers = rows.filter(r => (r.category === 'bundle' || r.category === 'gift_card' ? r.id : r.game_key) === key)
+    .sort((a, b) => Number(a.discount_price) - Number(b.discount_price));
+  if (!offers.length) return;
+  const r = offers[0];
+  const target = wishlist[key];
+  document.getElementById('sheet').innerHTML = `
+    <button class="close" data-act="close" aria-label="Fechar">✕</button>
+    ${thumbHTML(r)}
+    <div class="sheet-body">
+      <h2>${esc(r.title)}</h2>
+      <table class="offers">
+        ${offers.map(o => `<tr>
+          <td><span class="tag" style="background:${(STORES[o.store] || STORES.outras).color};color:#fff">${esc((STORES[o.store] || { label: o.store }).label)}</span>
+              <span class="tag">${esc(PLATFORMS[o.platform] || o.platform)}</span></td>
+          <td><b>${brl(o.discount_price)}</b> ${o.original_price && Number(o.original_price) > Number(o.discount_price) ? `<span class="was">${brl(o.original_price)}</span>` : ''}
+              ${o.discount_pct ? `<div class="approx" style="color:var(--good)">-${o.discount_pct}%</div>` : ''}</td>
+          <td style="font-size:12px;color:var(--muted)">
+              ${o.history_low != null ? `Menor histórico: ${brl(o.history_low)}<br>` : o.own_low != null ? `Menor visto: ${brl(o.own_low)}<br>` : ''}
+              ${o.expires_at ? `Até ${until(o.expires_at)}` : ''}</td>
+          <td style="text-align:right"><a class="go" href="${esc(o.deal_url)}" target="_blank" rel="noopener">Ir à loja ↗</a></td>
+        </tr>`).join('')}
+      </table>
+      <div class="target-box">
+        <button class="chip ${key in wishlist ? 'on' : ''}" data-act="wish" data-key="${esc(key)}">${key in wishlist ? '❤️ Na wishlist' : '🤍 Adicionar à wishlist'}</button>
+        <button class="chip ${collection[key] ? 'on' : ''}" data-act="coll" data-key="${esc(key)}">🎮 ${collection[key] ? 'Já tenho' : 'Marcar como já tenho'}</button>
+        <span>Avisar abaixo de R$</span>
+        <input type="number" min="0" step="0.01" id="targetInput" value="${target ?? ''}" placeholder="ex: 50">
+        <button class="chip" data-act="target" data-key="${esc(key)}">Salvar</button>
+      </div>
+    </div>`;
+  document.getElementById('modal').classList.add('open');
+}
+
+// ---------- eventos ----------
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act],[data-tab],[data-platform],[data-store],.card');
+  if (!t) { if (e.target.id === 'modal') document.getElementById('modal').classList.remove('open'); return; }
+  const act = t.dataset.act;
+  if (act) {
+    e.stopPropagation();
+    const k = t.dataset.key;
+    if (act === 'close') return document.getElementById('modal').classList.remove('open');
+    if (act === 'wish') { if (k in wishlist) delete wishlist[k]; else wishlist[k] = null; persist('lc_wish_v2', wishlist); }
+    if (act === 'coll') { if (collection[k]) delete collection[k]; else collection[k] = true; persist('lc_coll_v2', collection); }
+    if (act === 'target') {
+      const v = document.getElementById('targetInput').value;
+      wishlist[k] = v === '' ? null : Number(v); persist('lc_wish_v2', wishlist);
+    }
+    updateCounts();
+    if (document.getElementById('modal').classList.contains('open')) openDetails(k);
+    apply();
+    return;
+  }
+  if (t.dataset.tab) return setTab(t.dataset.tab);
+  if (t.dataset.platform) { state.platform = t.dataset.platform; buildChips(); return apply(); }
+  if (t.dataset.store) { state.store = t.dataset.store; buildChips(); return apply(); }
+  if (t.classList.contains('card')) openDetails(t.dataset.key);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.getElementById('modal').classList.remove('open'); });
+
+let qTimer;
+document.getElementById('q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = e.target.value; apply(); }, 200); });
+document.getElementById('sort').addEventListener('change', e => { state.sort = e.target.value; apply(); });
+document.getElementById('maxPrice').addEventListener('change', e => { state.maxPrice = e.target.value; apply(); });
+document.getElementById('minOff').addEventListener('change', e => { state.minOff = Number(e.target.value); apply(); });
+document.getElementById('hideOwned').addEventListener('change', e => { state.hideOwned = e.target.checked; apply(); });
+document.getElementById('dlc').addEventListener('change', async e => { state.dlc = e.target.checked; if (state.dlc) await loadDlc(); apply(); });
+
+new IntersectionObserver(entries => { if (entries[0].isIntersecting) renderMore(); }, { rootMargin: '600px' })
+  .observe(document.getElementById('sentinel'));
+
+updateCounts();
+loadData();
+</script>
+</body>
+</html>

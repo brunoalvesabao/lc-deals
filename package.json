@@ -1,0 +1,19 @@
+{
+  "name": "lc-deals",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agregador pessoal de ofertas de jogos (PC, Switch, Xbox, PlayStation, gift cards)",
+  "scripts": {
+    "sync": "node sync-deals.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "playwright": "^1.48.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
