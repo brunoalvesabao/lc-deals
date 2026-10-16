@@ -40,6 +40,8 @@
   .tab.on { color: var(--text); border-color: var(--accent); }
   .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; color: var(--muted); }
   .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip.off { opacity: .45; }
+  .chip small { opacity: .75; margin-left: 4px; }
   .row2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-bottom: 10px; font-size: 13px; color: var(--muted); }
   .row2 label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 
@@ -54,14 +56,14 @@
   .card.wish { border-color: var(--hot); }
   .card.target { box-shadow: 0 0 0 2px var(--good); }
   .thumb { position: relative; aspect-ratio: 16 / 9; background: var(--panel2); overflow: hidden; }
-  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb img { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; display: block; }
   .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 28px; color: rgba(255,255,255,.85); text-align: center; padding: 10px; }
-  .badge { position: absolute; font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 6px; }
+  .badge { position: absolute; z-index: 2; font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 6px; }
   .b-off { top: 8px; right: 8px; background: var(--good); color: #062; }
   .b-free { top: 8px; right: 8px; background: var(--good); color: #062; }
   .b-low { bottom: 8px; left: 8px; background: var(--hot); color: #fff; }
   .b-soon { top: 8px; right: 8px; background: var(--warn); color: #3a2a00; }
-  .acts { position: absolute; bottom: 8px; right: 8px; display: flex; gap: 6px; }
+  .acts { position: absolute; z-index: 2; bottom: 8px; right: 8px; display: flex; gap: 6px; }
   .acts button { width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); cursor: pointer; font-size: 14px; }
   .acts button.on { background: #fff; }
   .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
@@ -173,7 +175,10 @@ const STORES = {
   playstation:    { label: 'PS Store',       color: '#0070d1' },
   outras:         { label: 'Outras',         color: '#555' },
 };
-const PLATFORMS = { all: 'Todas', pc: 'PC', switch: 'Switch', xbox: 'Xbox', ps: 'PlayStation', giftcard: 'Gift cards' };
+const PLATFORMS = { all: 'Todas', pc: 'PC', switch: 'Switch', xbox: 'Xbox', ps: 'PlayStation' };
+const PLATFORM_LABEL = { ...PLATFORMS, giftcard: 'Gift card' };
+const PLATFORM_SOURCE = { switch: 'nintendo', xbox: 'xbox', ps: 'playstation' };
+let runsBySource = {};
 const PAGE = 60;
 
 const state = { tab: 'deals', platform: 'all', store: 'all', q: '', sort: 'hot', maxPrice: '', minOff: 0, dlc: false, hideOwned: true, shown: PAGE };
@@ -240,7 +245,6 @@ async function loadData() {
     document.getElementById('summary').textContent = 'Erro ao ler o Supabase: ' + (e.message || e);
     return;
   }
-  buildChips();
   apply();
 }
 
@@ -252,18 +256,19 @@ async function loadDlc() {
 }
 
 function renderStatus(runs) {
+  runsBySource = Object.fromEntries(runs.map(r => [r.source, r]));
   const names = { itad: 'PC', epic_free: 'Epic grátis', xbox: 'Xbox', nintendo: 'Nintendo', playstation: 'PlayStation', nuuvem_gift: 'Gift Nuuvem', instant_gaming: 'Instant Gaming' };
   document.getElementById('status').innerHTML = runs
     .sort((a, b) => (names[a.source] || a.source).localeCompare(names[b.source] || b.source))
-    .map(r => `<span class="st ${r.ok ? 'ok' : 'bad'}" title="${esc(r.message || '')}"><b>${r.ok ? '●' : '●'}</b> ${esc(names[r.source] || r.source)} · ${r.ok ? r.count : 'falhou'} · ${ago(r.ran_at)}</span>`)
+    .map(r => `<span class="st ${r.ok ? 'ok' : 'bad'}" title="${esc(r.message || '')}"><b>●</b> ${esc(names[r.source] || r.source)} · ${r.ok ? r.count : 'falhou'} · ${ago(r.ran_at)}</span>`)
     .join('');
 }
 
 // ---------- filtros e agrupamento ----------
-function rowPasses(r) {
+function rowPasses(r, ignore = '') {
   if (!state.dlc && r.category === 'dlc') return false;
-  if (state.platform !== 'all' && r.platform !== state.platform) return false;
-  if (state.store !== 'all' && r.store !== state.store) return false;
+  if (ignore !== 'platform' && state.platform !== 'all' && r.platform !== state.platform) return false;
+  if (ignore !== 'store' && state.store !== 'all' && r.store !== state.store) return false;
   if (state.maxPrice !== '' && Number(r.discount_price) > Number(state.maxPrice)) return false;
   if (state.minOff && Number(r.discount_pct || 0) < state.minOff) return false;
   switch (state.tab) {
@@ -277,6 +282,8 @@ function rowPasses(r) {
 }
 
 function apply() {
+  if (state.store !== 'all' && !rows.some(r => r.store === state.store && rowPasses(r, 'store'))) state.store = 'all';
+  buildChips();
   const q = state.q.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const map = new Map();
   for (const r of rows) {
@@ -335,7 +342,7 @@ function cardHTML(g) {
       <div class="title">${esc(r.title)}</div>
       <div class="meta">
         ${stores.map(s => `<span class="tag" style="background:${(STORES[s] || STORES.outras).color};color:#fff">${esc((STORES[s] || { label: s }).label)}</span>`).join('')}
-        ${plats.map(p => `<span class="tag">${esc(PLATFORMS[p] || p)}</span>`).join('')}
+        ${plats.map(p => `<span class="tag">${esc(PLATFORM_LABEL[p] || p)}</span>`).join('')}
       </div>
       <div class="price">
         <span class="now">${brl(r.discount_price)}</span>
@@ -356,7 +363,12 @@ function render() {
   if (!total) {
     const msg = state.tab === 'wishlist' ? 'Sua wishlist está vazia. Toque no 🤍 de um jogo.'
       : state.tab === 'collection' ? 'Nenhum jogo marcado como "já tenho".'
-      : 'Nada encontrado com esses filtros.';
+      : (() => {
+          const src = PLATFORM_SOURCE[state.platform];
+          const run = src && runsBySource[src];
+          if (run && !run.ok) return `A coleta de ${esc(PLATFORMS[state.platform])} falhou na última execução: ${esc(run.message || 'sem detalhes')}`;
+          return 'Nada encontrado com esses filtros.';
+        })();
     grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${msg}</div>`;
     return;
   }
@@ -372,11 +384,21 @@ function renderMore() {
 }
 
 function buildChips() {
-  const plat = document.getElementById('platforms');
-  plat.innerHTML = Object.entries(PLATFORMS).map(([k, v]) => `<button class="chip ${state.platform === k ? 'on' : ''}" data-platform="${k}">${v}</button>`).join('');
-  const present = [...new Set(rows.map(r => r.store))].sort((a, b) => (STORES[a]?.label || a).localeCompare(STORES[b]?.label || b));
-  document.getElementById('stores').innerHTML = [`<button class="chip ${state.store === 'all' ? 'on' : ''}" data-store="all">Todas as lojas</button>`]
-    .concat(present.map(s => `<button class="chip ${state.store === s ? 'on' : ''}" data-store="${esc(s)}">${esc((STORES[s] || { label: s }).label)}</button>`)).join('');
+  const platCount = {}; const storeCount = {};
+  for (const r of rows) {
+    if (rowPasses(r, 'platform')) platCount[r.platform] = (platCount[r.platform] || 0) + 1;
+    if (rowPasses(r, 'store')) storeCount[r.store] = (storeCount[r.store] || 0) + 1;
+  }
+  const platTotal = Object.values(platCount).reduce((a, b) => a + b, 0);
+  const storeTotal = Object.values(storeCount).reduce((a, b) => a + b, 0);
+  document.getElementById('platforms').innerHTML = Object.entries(PLATFORMS).map(([k, v]) => {
+    const n = k === 'all' ? platTotal : (platCount[k] || 0);
+    return `<button class="chip ${state.platform === k ? 'on' : ''} ${n ? '' : 'off'}" data-platform="${k}">${v}<small>${n.toLocaleString('pt-BR')}</small></button>`;
+  }).join('');
+  const present = Object.keys(storeCount).filter(s => storeCount[s] > 0 || s === state.store)
+    .sort((a, b) => (STORES[a]?.label || a).localeCompare(STORES[b]?.label || b));
+  document.getElementById('stores').innerHTML = [`<button class="chip ${state.store === 'all' ? 'on' : ''}" data-store="all">Todas as lojas<small>${storeTotal.toLocaleString('pt-BR')}</small></button>`]
+    .concat(present.map(s => `<button class="chip ${state.store === s ? 'on' : ''}" data-store="${esc(s)}">${esc((STORES[s] || { label: s }).label)}<small>${(storeCount[s] || 0).toLocaleString('pt-BR')}</small></button>`)).join('');
 }
 
 function setTab(tab) {
@@ -405,7 +427,7 @@ function openDetails(key) {
       <table class="offers">
         ${offers.map(o => `<tr>
           <td><span class="tag" style="background:${(STORES[o.store] || STORES.outras).color};color:#fff">${esc((STORES[o.store] || { label: o.store }).label)}</span>
-              <span class="tag">${esc(PLATFORMS[o.platform] || o.platform)}</span></td>
+              <span class="tag">${esc(PLATFORM_LABEL[o.platform] || o.platform)}</span></td>
           <td><b>${brl(o.discount_price)}</b> ${o.original_price && Number(o.original_price) > Number(o.discount_price) ? `<span class="was">${brl(o.original_price)}</span>` : ''}
               ${o.discount_pct ? `<div class="approx" style="color:var(--good)">-${o.discount_pct}%</div>` : ''}</td>
           <td style="font-size:12px;color:var(--muted)">
@@ -446,8 +468,8 @@ document.addEventListener('click', e => {
     return;
   }
   if (t.dataset.tab) return setTab(t.dataset.tab);
-  if (t.dataset.platform) { state.platform = t.dataset.platform; buildChips(); return apply(); }
-  if (t.dataset.store) { state.store = t.dataset.store; buildChips(); return apply(); }
+  if (t.dataset.platform) { state.platform = t.dataset.platform; return apply(); }
+  if (t.dataset.store) { state.store = t.dataset.store; return apply(); }
   if (t.classList.contains('card')) openDetails(t.dataset.key);
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') document.getElementById('modal').classList.remove('open'); });
