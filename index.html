@@ -77,7 +77,7 @@
   .filterbar { display: flex; gap: 8px; align-items: center; padding: 10px 0 12px; }
   .plats { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: 1; }
   .plats::-webkit-scrollbar { display: none; }
-  .pchip { --c: var(--accent); display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--panel); color: var(--c); cursor: pointer; font-size: 13px; font-weight: 700; white-space: nowrap; flex: none; }
+  .pchip { --c: var(--accent); display: inline-flex; align-items: center; gap: 7px; height: 42px; padding: 0 12px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--panel); color: var(--c); cursor: pointer; font-size: 13px; font-weight: 700; white-space: nowrap; flex: none; }
   .pchip i { font-size: 22px; }
   .pchip small { color: var(--muted); font-weight: 600; }
   .pchip .lbl { color: var(--text); font-weight: 600; }
@@ -97,6 +97,14 @@
   .mitem:hover { background: var(--panel2); }
   .mitem.on { background: var(--accent-soft); font-weight: 600; }
   .mitem .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .slogo { height: 30px; width: auto; border-radius: 6px; display: block; flex: none; }
+  .slogo.wm { height: 20px; border-radius: 0; }
+  .mitem .slogo-box { display: flex; align-items: center; gap: 10px; flex: none; }
+  .picon { height: 30px; width: 30px; border-radius: 6px; display: block; }
+  .mitem .picon { height: 30px; width: 30px; }
+  .mlogo { display: block; flex: none; background: currentColor; -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat; }
+  .emblem { height: 26px; width: 26px; border-radius: 6px; display: block; flex: none; }
+  .pchip .cl { height: 20px; width: auto; border-radius: 4px; display: block; }
   .mitem small { margin-left: auto; color: var(--muted); }
   .mitem.off { opacity: .45; }
   .msep { height: 1px; background: var(--line); margin: 6px 4px; }
@@ -298,11 +306,11 @@ const SUPABASE_URL = CFG.supabaseUrl || 'https://qnejqlblwzwrfvbsvean.supabase.c
 const SUPABASE_ANON_KEY = CFG.anonKey || '';
 
 const STORES = {
-  steam:          { label: 'Steam',          color: '#1a9fff' },
-  epic:           { label: 'Epic Games',     color: '#4a4a4a' },
-  nuuvem:         { label: 'Nuuvem',         color: '#0e8fa8' },
-  instant_gaming: { label: 'Instant Gaming', color: '#ff5400' },
-  humble:         { label: 'Humble Bundle',  color: '#cc2929' },
+  steam:          { label: 'Steam',          color: '#1a9fff', logo: 'img/stores/steam.png', named: true },
+  epic:           { label: 'Epic Games',     color: '#4a4a4a', logo: 'img/stores/epic.png' },
+  nuuvem:         { label: 'Nuuvem',         color: '#0e8fa8', logo: 'img/stores/nuuvem.png', named: true },
+  instant_gaming: { label: 'Instant Gaming', color: '#ff5400', logo: 'img/stores/instant-gaming.png', named: true },
+  humble:         { label: 'Humble Bundle',  color: '#cc2929', logo: 'img/stores/humble.svg', named: true, wordmark: true },
   nintendo:       { label: 'Nintendo eShop', color: '#e60012' },
   xbox:           { label: 'Xbox',           color: '#107c10' },
   playstation:    { label: 'PS Store',       color: '#0070d1' },
@@ -310,10 +318,10 @@ const STORES = {
 };
 const PC_STORES = ['steam', 'epic', 'nuuvem', 'instant_gaming', 'humble', 'outras'];
 const PLATFORMS = {
-  switch: { icon: 'mdi-nintendo-switch',      color: '#e60012', title: 'Nintendo Switch' },
-  ps:     { icon: 'mdi-sony-playstation',     color: '#0070d1', title: 'PlayStation' },
-  xbox:   { icon: 'mdi-microsoft-xbox',       color: '#1f9b1f', title: 'Xbox' },
-  pc:     { icon: 'mdi-desktop-tower-monitor', color: '#8b5cf6', title: 'PC' },
+  switch: { mask: 'img/platforms/switch-mask.png',      w: 99, h: 22, color: '#e60012', title: 'Nintendo Switch' },
+  ps:     { mask: 'img/platforms/playstation-mask.svg', w: 94, h: 17, color: '#0070d1', title: 'PlayStation' },
+  xbox:   { emblem: 'img/platforms/xbox-emblem.png', mask: 'img/platforms/xbox-word-mask.png', w: 46, h: 14, color: '#2ea043', title: 'Xbox' },
+  pc:     { img: 'img/pc-game.png', color: '#8b5cf6', title: 'PC' },
 };
 const PLATFORM_LABEL = { switch: 'Switch', ps: 'PlayStation', xbox: 'Xbox', pc: 'PC', giftcard: 'Gift card' };
 const PLATFORM_SOURCE = { switch: 'nintendo', xbox: 'xbox', ps: 'playstation' };
@@ -356,6 +364,13 @@ function until(iso) {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
 const storeInfo = s => STORES[s] || { label: s, color: '#666' };
+// Logo da loja no menu: se a imagem já traz o nome, mostra só ela; senão logo + nome
+function storeLogo(s) {
+  const st = storeInfo(s);
+  if (!st.logo) return `<span class="sw" style="background:${st.color}"></span>${esc(st.label)}`;
+  const img = `<img class="slogo ${st.wordmark ? 'wm' : ''}" src="${st.logo}" alt="${esc(st.label)}" title="${esc(st.label)}">`;
+  return st.named ? `<span class="slogo-box">${img}</span>` : `<span class="slogo-box">${img}<span>${esc(st.label)}</span></span>`;
+}
 
 // Gift cards: a "plataforma" vem do nome do cartão
 function platformOf(r) {
@@ -572,7 +587,7 @@ function render() {
   const chips = activeFilterChips().map(([k, l]) => `<span class="active-f">${esc(l)}<button data-clear="${k}" aria-label="Remover filtro">×</button></span>`).join('');
   let note = '';
   if ((state.sort === 'metascore' || state.minMc) && meta.size === 0) note = ' · as notas ainda não foram coletadas';
-  $('summary').innerHTML = `<span>${num(total)} jogos/itens${note}</span>${chips}`;
+  $('summary').innerHTML = `<span>${num(total)} ${total === 1 ? 'item' : 'itens'}${note}</span>${chips}`;
   if (!total) {
     let msg = 'Nada encontrado com esses filtros.';
     if (state.tab === 'wishlist') msg = 'Sua wishlist está vazia. Toque no coração de um jogo.';
@@ -607,8 +622,11 @@ function buildPlatforms() {
   for (const [k, p] of Object.entries(PLATFORMS)) {
     const n = pc[k] || 0;
     const isPc = k === 'pc';
-    const lbl = isPc && state.platform === 'pc' && state.store !== 'all' ? `<span class="lbl">${esc(storeInfo(state.store).label)}</span>` : '';
-    html += `<button class="pchip ${state.platform === k ? 'on' : ''} ${n ? '' : 'off'}" style="--c:${p.color}" title="${esc(p.title)}" aria-label="${esc(p.title)}" ${isPc ? 'data-pcmenu="1" aria-haspopup="menu"' : `data-platform="${k}"`}><i class="mdi ${p.icon}"></i>${lbl}<small>${num(n)}</small>${isPc ? '<i class="mdi mdi-chevron-down caret"></i>' : ''}</button>`;
+    const st = isPc && state.platform === 'pc' && state.store !== 'all' ? storeInfo(state.store) : null;
+    const lbl = !st ? '' : st.logo ? `<img class="cl" src="${st.logo}" alt="${esc(st.label)}">` : `<span class="lbl">${esc(st.label)}</span>`;
+    const ico = p.img ? `<img class="picon" src="${p.img}" alt="">`
+      : `${p.emblem ? `<img class="emblem" src="${p.emblem}" alt="">` : ''}<span class="mlogo" style="--m:url(${p.mask});width:${p.w}px;height:${p.h}px"></span>`;
+    html += `<button class="pchip ${state.platform === k ? 'on' : ''} ${n ? '' : 'off'}" style="--c:${p.color}" title="${esc(p.title)}" aria-label="${esc(p.title)}" ${isPc ? 'data-pcmenu="1" aria-haspopup="menu"' : `data-platform="${k}"`}>${ico}${lbl}<small>${num(n)}</small>${isPc ? '<i class="mdi mdi-chevron-down caret"></i>' : ''}</button>`;
   }
   $('platforms').innerHTML = html;
 }
@@ -632,9 +650,9 @@ function openPcMenu(anchor) {
   const pcTotal = pcRows.length;
   const items = PC_STORES.filter(s => byStore[s] || s !== 'outras');
   $('pcMenu').innerHTML = `
-    <button class="mitem ${state.platform === 'pc' && state.store === 'all' ? 'on' : ''}" data-pcstore="all"><i class="mdi mdi-desktop-tower-monitor" style="color:${PLATFORMS.pc.color};font-size:18px"></i>Todas as lojas de PC<small>${num(pcTotal)}</small></button>
+    <button class="mitem ${state.platform === 'pc' && state.store === 'all' ? 'on' : ''}" data-pcstore="all"><img class="picon" src="${PLATFORMS.pc.img}" alt="">Todas as lojas<small>${num(pcTotal)}</small></button>
     <div class="msep"></div>
-    ${items.map(s => `<button class="mitem ${state.platform === 'pc' && state.store === s ? 'on' : ''} ${byStore[s] ? '' : 'off'}" data-pcstore="${s}"><span class="sw" style="background:${storeInfo(s).color}"></span>${esc(storeInfo(s).label)}<small>${num(byStore[s] || 0)}</small></button>`).join('')}`;
+    ${items.map(s => `<button class="mitem ${state.platform === 'pc' && state.store === s ? 'on' : ''} ${byStore[s] ? '' : 'off'}" data-pcstore="${s}">${storeLogo(s)}<small>${num(byStore[s] || 0)}</small></button>`).join('')}`;
   void sc;
   placePop($('pcMenu'), anchor);
 }
