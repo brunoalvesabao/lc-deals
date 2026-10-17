@@ -453,7 +453,7 @@ async function collectXboxBrowser() {
       return out;
     }).catch(() => []);
     for (const e of embedded) { try { rows.push(...xboxRowsFrom(JSON.parse(e), seen)); } catch { /* ignora */ } }
-    await loadMoreUntilDone(page, { label: 'xbox', textRe: /carregar mais|mostrar mais|load more/i, count: () => rows.length, maxClicks: 200 });
+    await loadMoreUntilDone(page, { label: 'xbox', textRe: /carreg\w*\s+mais|mostrar mais|load more/i, count: () => rows.length, maxClicks: 200 });
     console.log(`   xbox ${url.split('/').slice(-1)[0]}: +${rows.length - before} ofertas`);
     if (rows.length >= 300) break;
   }
@@ -498,26 +498,35 @@ async function acceptCookies(page) {
 }
 
 async function loadMoreUntilDone(page, { label, textRe, count, maxClicks = 200 }) {
+  // count() pode ser assíncrono; depois de cada clique espera a lista crescer (no máx. 10s) em vez de esperar a rede "parar"
   let stale = 0;
   let clicks = 0;
-  let last = count();
+  let last = await count();
+  const t0 = Date.now();
   while (clicks < maxClicks && stale < 3) {
-    await page.mouse.wheel(0, 20000);
-    await sleep(800);
-    let btn = page.getByRole('button', { name: textRe }).last();
-    if (!(await btn.count().catch(() => 0))) btn = page.locator('button, a').filter({ hasText: textRe }).last();
-    if (!(await btn.count().catch(() => 0))) break;
+    let btn = page.locator('button').filter({ hasText: textRe }).last();
+    if (!(await btn.count().catch(() => 0))) {
+      await page.mouse.wheel(0, 20000);
+      await sleep(1200);
+      btn = page.locator('button').filter({ hasText: textRe }).last();
+      if (!(await btn.count().catch(() => 0))) break;
+    }
     await btn.scrollIntoViewIfNeeded().catch(() => {});
     await btn.click({ timeout: 10000 }).catch(() => {});
     clicks++;
-    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
-    await sleep(700);
-    const now = count();
+    let now = last;
+    for (let i = 0; i < 33; i++) {
+      await sleep(300);
+      now = await count();
+      if (now > last) break;
+    }
+    if (now > last) await sleep(400); // deixa terminar de chegar o lote
+    now = await count();
     stale = now > last ? 0 : stale + 1;
     last = now;
-    if (clicks % 20 === 0) console.log(`   ${label}: ${clicks} cliques, ${now} itens`);
+    if (clicks % 10 === 0) console.log(`   ${label}: ${clicks} cliques, ${now} itens (${Math.round((Date.now() - t0) / 1000)}s)`);
   }
-  console.log(`   ${label}: fim após ${clicks} cliques (${last} itens)`);
+  console.log(`   ${label}: fim após ${clicks} cliques (${last} itens, ${Math.round((Date.now() - t0) / 1000)}s)`);
 }
 
 function jsonCatcher(page, onJson) {
@@ -547,30 +556,37 @@ async function collectNintendo() {
   if (nextData) { try { take(JSON.parse(nextData)); } catch { /* ignora */ } }
   console.log(`   nintendo: ${found.size} itens na 1ª página`);
 
-  // O site guarda a página no endereço (#...&p=N). 1º tenta pular direto para o fim (o site carrega tudo até lá);
-  // se não der, anda página por página; se ainda assim não crescer, tenta clicar em "Carregar mais".
-  const base = 'https://www.nintendo.com/pt-br/store/sales-and-deals/';
-  const goHash = async (pn) => {
-    await page.goto(`${base}#show=0&p=${pn}&sort=df`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-    await page.reload({ waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
-    await page.mouse.wheel(0, 20000);
-    await sleep(1500);
-  };
-  await goHash(120);
-  console.log(`   nintendo: ${found.size} itens após pular para a última página`);
-  if (found.size < 1000) {
-    let stale = 0;
-    for (let pn = 2; pn <= 150 && stale < 3; pn++) {
-      const before = found.size;
-      await goHash(pn);
-      stale = found.size > before ? 0 : stale + 1;
-      if (pn % 10 === 0) console.log(`   nintendo: página ${pn}, ${found.size} itens`);
+  // Clica em "Carregue mais" até acabar (40 jogos por clique)
+  const cardSel = 'a[href*="/store/products/"]';
+  await loadMoreUntilDone(page, {
+    label: 'nintendo',
+    textRe: /carreg\w*\s+mais|load more/i,
+    count: async () => Math.max(found.size, await page.locator(cardSel).count().catch(() => 0)),
+    maxClicks: 200,
+  });
+
+  // Plano B: lê os cards que estão na tela (caso algum lote não tenha passado pela captura de dados)
+  const domCards = await page.evaluate((sel) => {
+    const out = []; const seen = new Set();
+    for (const a of document.querySelectorAll(sel)) {
+      const key = (a.getAttribute('href').match(/products\/([^/?#]+)/) || [])[1];
+      if (!key || seen.has(key)) continue;
+      let card = a;
+      for (let i = 0; i < 6 && card.parentElement && !/R\$\s*\d/.test(card.innerText || ''); i++) card = card.parentElement;
+      const text = card.innerText || '';
+      const prices = text.match(/R\$\s*\d[\d.,]*/g) || [];
+      if (prices.length < 2) continue;
+      seen.add(key);
+      const img = card.querySelector('img');
+      const title = (card.querySelector('h2, h3, [class*="title" i]')?.innerText || img?.alt || '').trim().split('\n')[0];
+      out.push({ key, title, prices, img: img ? (img.currentSrc || img.src) : null });
     }
-  }
-  if (found.size < 1000) {
-    await page.goto(base, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
-    await loadMoreUntilDone(page, { label: 'nintendo', textRe: /carregar mais|mais resultados|ver mais|load more/i, count: () => found.size, maxClicks: 120 });
-  }
+    return out;
+  }, cardSel).catch(() => []);
+  const byKey = new Set([...found.values()].map(o => o.urlKey));
+  const extraDom = domCards.filter(c => !byKey.has(c.key) && c.title);
+  console.log(`   nintendo: ${found.size} pela captura, ${domCards.length} cards na tela, ${extraDom.length} extras pela tela`);
+
   if (found.size < 100) await dump(page, 'nintendo');
   await page.context().close();
   if (found.size === 0) throw new Error('a página de promoções da Nintendo não entregou jogos (veja debug/nintendo.png)');
@@ -618,6 +634,22 @@ async function collectNintendo() {
       image_url: img,
       deal_url: `https://www.nintendo.com/pt-br/store/products/${o.urlKey}/`,
       expires_at: end,
+    }));
+  }
+  for (const c of extraDom) {
+    const nums = c.prices.map(parseMoney).filter(v => v != null).sort((x, y) => x - y);
+    const sale = nums[0]; const regular = nums[nums.length - 1];
+    if (!(sale < regular)) continue;
+    rows.push(baseRow('nintendo', {
+      id: `nintendo:${c.key}`,
+      title: c.title,
+      store: 'nintendo',
+      platform: 'switch',
+      category: 'game_deal',
+      original_price: regular,
+      discount_price: sale,
+      image_url: c.img && !c.img.startsWith('data:') ? c.img : null,
+      deal_url: `https://www.nintendo.com/pt-br/store/products/${c.key}/`,
     }));
   }
   return rows;
@@ -840,6 +872,89 @@ async function collectInstantGaming() {
 }
 
 // ---------------------------------------------------------------------
+// 8) Metascore e "mais procurados" (IsThereAnyDeal) -> tabela game_meta
+//    Não mexe nas ofertas. A cada rodada completa até META_MAX jogos que ainda não têm nota,
+//    começando pelos mais desejados; em poucos dias todo o catálogo de PC fica coberto.
+//    Consoles aproveitam a nota pelo nome do jogo (game_key).
+// ---------------------------------------------------------------------
+const META_MAX = Number(process.env.META_MAX || 500);
+
+async function selectAll(table, cols, build = q => q) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build(supabase.from(table).select(cols)).range(from, from + 999);
+    if (error) throw new Error(`Supabase (${table}): ${error.message}`);
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+function dedupeBy(rows, key, better) {
+  const m = new Map();
+  for (const r of rows) { const k = r[key]; if (!k) continue; const old = m.get(k); m.set(k, old ? better(old, r) : r); }
+  return [...m.values()];
+}
+
+async function collectMeta() {
+  if (!ITAD_KEY) throw new Error('Falta o secret ITAD_API_KEY');
+  const now = new Date().toISOString();
+
+  // 1) Ranking dos mais desejados (wishlists do IsThereAnyDeal)
+  const wl = new Map();
+  for (let off = 0; off < 5000; off += 500) {
+    const list = await fetchJson(`https://api.isthereanydeal.com/stats/most-waitlisted/v1?key=${ITAD_KEY}&offset=${off}&limit=500`);
+    if (!Array.isArray(list) || !list.length) break;
+    for (const x of list) wl.set(x.id, { count: x.count, title: x.title });
+    await sleep(300);
+  }
+  console.log(`   ranking de mais desejados: ${wl.size} jogos`);
+  const wlRows = dedupeBy([...wl.entries()].map(([id, v]) => ({ game_key: gameKey(v.title), itad_id: id, title: v.title, waitlisted: v.count })),
+    'game_key', (a, b) => (b.waitlisted > a.waitlisted ? b : a));
+  for (const part of chunk(wlRows, 500)) {
+    const { error } = await supabase.from('game_meta').upsert(part, { onConflict: 'game_key' });
+    if (error) throw new Error(`Supabase (game_meta): ${error.message} — rodou o arquivo supabase/migration-002.sql?`);
+  }
+
+  // 2) Jogos de PC em oferta agora (o id do ITAD está dentro do id da oferta)
+  const deals = await selectAll('deals', 'id', q => q.eq('source', 'itad').like('id', '%:itad-%'));
+  const ids = [...new Set(deals.map(d => d.id.split(':itad-')[1]).filter(Boolean))];
+
+  // 3) Pula os que já têm nota buscada nos últimos 30 dias
+  const known = await selectAll('game_meta', 'itad_id,meta_fetched_at', q => q.not('meta_fetched_at', 'is', null));
+  const cutoff = Date.now() - 30 * 864e5;
+  const fresh = new Set(known.filter(k => Date.parse(k.meta_fetched_at) > cutoff).map(k => k.itad_id));
+  const todo = ids.filter(id => !fresh.has(id))
+    .sort((a, b) => (wl.get(b)?.count || 0) - (wl.get(a)?.count || 0))
+    .slice(0, META_MAX);
+  console.log(`   ${ids.length} jogos de PC em oferta; ${ids.filter(id => !fresh.has(id)).length} sem nota; buscando ${todo.length} agora`);
+
+  // 4) Detalhes de cada jogo (nota Metascore, nota Steam, quantas pessoas desejam)
+  const info = [];
+  for (const id of todo) {
+    try {
+      const g = await fetchJson(`https://api.isthereanydeal.com/games/info/v2?key=${ITAD_KEY}&id=${id}`);
+      const score = src => (g.reviews || []).find(r => r.source === src)?.score ?? null;
+      info.push({
+        game_key: gameKey(g.title), itad_id: id, title: g.title,
+        metascore: score('Metascore'), steam_score: score('Steam'),
+        waitlisted: g.stats?.waitlisted ?? wl.get(id)?.count ?? null,
+        meta_fetched_at: now,
+      });
+    } catch (e) { console.warn(`   info ${id}: ${e.message}`); }
+    if (info.length % 100 === 0 && info.length) console.log(`   ${info.length}/${todo.length}`);
+    await sleep(350);
+  }
+  const infoRows = dedupeBy(info, 'game_key', (a, b) => ((b.waitlisted || 0) > (a.waitlisted || 0) ? b : a));
+  for (const part of chunk(infoRows, 500)) {
+    const { error } = await supabase.from('game_meta').upsert(part, { onConflict: 'game_key' });
+    if (error) throw new Error(`Supabase (game_meta): ${error.message}`);
+  }
+  console.log(`   notas salvas: ${infoRows.filter(r => r.metascore != null).length} com Metascore`);
+  return wlRows.length + infoRows.length;
+}
+
+// ---------------------------------------------------------------------
 // Execução
 // ---------------------------------------------------------------------
 const SOURCES = [
@@ -850,6 +965,7 @@ const SOURCES = [
   { name: 'playstation', label: 'PlayStation', fn: collectPlayStation, timeout: 12 * 60e3 },
   { name: 'nuuvem_gift', label: 'Gift cards Nuuvem', fn: collectNuuvemGiftCards, timeout: 6 * 60e3 },
   { name: 'instant_gaming', label: 'Instant Gaming', fn: collectInstantGaming, timeout: 6 * 60e3 },
+  { name: 'meta', label: 'Metascore e mais procurados', fn: collectMeta, timeout: 20 * 60e3, custom: true },
 ];
 
 async function save(rows) {
@@ -869,11 +985,11 @@ async function main() {
     console.log(`\n-> ${s.label}`);
     let ok = false; let count = 0; let message = null;
     try {
-      const rows = await withTimeout(s.fn(), s.timeout, s.label);
-      count = await save(rows);
+      const result = await withTimeout(s.fn(), s.timeout, s.label);
+      count = s.custom ? result : await save(result);
       ok = count > 0;
       if (!ok) message = 'nenhuma oferta encontrada (veja os arquivos de debug)';
-      if (ok) {
+      if (ok && !s.custom) {
         // Remove o que a loja não tem mais em promoção (só se a coleta deu certo)
         const { error } = await supabase.from('deals').delete().eq('source', s.name).lt('last_seen_at', RUN_STARTED);
         if (error) console.warn('   limpeza:', error.message);

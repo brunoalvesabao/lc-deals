@@ -40,3 +40,27 @@ Fontes: `itad` (PC), `epic_free`, `xbox`, `nintendo`, `playstation`, `nuuvem_gif
 - **GitHub Actions**: repositório público = minutos ilimitados. Se o repositório for privado, cada execução gasta ~10–15 min; 4×/dia ≈ 1.500 min/mês (o limite é 2.000). Se ficar apertado, troque o cron para `17 */8 * * *` (3×/dia).
 - **Supabase**: 500 MB. Com ~20–30 mil ofertas o banco fica em torno de 30–60 MB, mais o histórico de preços crescendo devagar.
 - **IsThereAnyDeal**: uso pessoal permitido; o coletor fica bem abaixo do limite de 1.000 chamadas a cada 5 minutos. Os links de PC passam pelo ITAD (exigência deles: não alterar os links).
+
+## Botão "Atualizar" do site (configurar uma vez)
+
+O botão chama a função `api/refresh.js` na Vercel, que pede ao GitHub para rodar o robô.
+Ela recusa um novo pedido se o robô já estiver rodando ou se a última rodada começou há menos de 30 minutos.
+
+1. **GitHub** → foto do perfil → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → Generate new token.
+   - Repository access: *Only select repositories* → `lc-deals`
+   - Permissions → Repository permissions → **Actions: Read and write** (o resto fica como está)
+   - Expiration: a mais longa disponível. Copie o token (começa com `github_pat_`).
+2. **Vercel** → projeto lc-deals → Settings → Environment Variables → adicione `GITHUB_TOKEN` com o token.
+   Se o seu usuário do GitHub não for `brunoalvesabao`, adicione também `GITHUB_REPO` = `seu-usuario/lc-deals`.
+3. Envie os arquivos para o GitHub (a Vercel publica sozinha). Se o token foi adicionado depois do último deploy, vá em Deployments → ⋯ → Redeploy.
+
+## Horários automáticos
+
+`cron: '0 3,9,15,21 * * *'` = 00h, 06h, 12h e 18h de Brasília (o GitHub conta em UTC, 3h à frente).
+O GitHub não garante o minuto exato: em horários cheios, a execução agendada costuma começar de 10 a 60 minutos depois.
+
+## Versão 2.5 — o que fazer uma vez
+
+1. **config.js**: cole a chave anon do Supabase neste arquivo (não mais no index.html). As próximas atualizações não vão trazer o config.js, então você não precisa colar de novo.
+2. **Supabase → SQL Editor**: rode o arquivo `supabase/migration-002.sql` (cria a tabela de notas/Metascore). Não apaga nada.
+3. A nova fonte `meta` busca Metascore e "mais procurados" no IsThereAnyDeal: ~500 jogos por rodada, começando pelos mais desejados. Com 4 rodadas por dia, o catálogo de PC fica todo coberto em poucos dias. Jogos de console usam a nota do jogo de mesmo nome; exclusivos sem versão de PC ficam sem nota.

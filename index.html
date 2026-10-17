@@ -5,15 +5,39 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LC Deals</title>
 <meta name="theme-color" content="#0d1117">
+<script>
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('lc_theme'); } catch (e) {}
+    if (!t || t === 'auto') t = window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<link rel="preconnect" href="https://wsrv.nl" crossorigin>
+<link rel="dns-prefetch" href="https://assets.isthereanydeal.com">
+<link rel="dns-prefetch" href="https://image.api.playstation.com">
+<link rel="dns-prefetch" href="https://assets.nintendo.com">
+<link rel="dns-prefetch" href="https://store-images.s-microsoft.com">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/MaterialDesign-Webfont/7.4.47/css/materialdesignicons.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 <style>
   :root {
-    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #2a3240;
-    --text: #e6edf3; --muted: #8b96a5; --accent: #7c5cff; --accent2: #a48bff;
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #2a3240; --line2: #3b4558;
+    --text: #e6edf3; --muted: #8b96a5; --accent: #7c5cff; --accent2: #a48bff; --accent-soft: #251f45;
     --good: #2ecc71; --hot: #ff4d6d; --warn: #f5b942;
+    --header: rgba(13,17,23,.94); --shimmer: rgba(255,255,255,.06); --shadow: 0 12px 32px rgba(0,0,0,.45);
     --radius: 12px;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #f3f5f9; --panel: #ffffff; --panel2: #eceff5; --line: #dbe0e8; --line2: #b9c1ce;
+    --text: #151922; --muted: #5a6475; --accent: #6a46ff; --accent2: #5434e6; --accent-soft: #ece7ff;
+    --good: #16a34a; --hot: #e11d48; --warn: #b7791f;
+    --header: rgba(243,245,249,.94); --shimmer: rgba(0,0,0,.05); --shadow: 0 12px 32px rgba(20,30,50,.15);
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; }
@@ -21,66 +45,111 @@
   a { color: inherit; text-decoration: none; }
   button, select, input { font: inherit; color: inherit; }
   .wrap { max-width: 1280px; margin: 0 auto; padding: 0 16px; }
+  .mdi { line-height: 1; }
 
-  header { position: sticky; top: 0; z-index: 20; background: rgba(13,17,23,.94); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-  .top { display: flex; gap: 12px; align-items: center; padding: 12px 0; flex-wrap: wrap; }
-  .logo { font-weight: 800; font-size: 20px; letter-spacing: -.02em; display: flex; align-items: center; gap: 8px; }
+  /* ---------- topo ---------- */
+  header { position: sticky; top: 0; z-index: 20; background: var(--header); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .top { display: flex; gap: 10px; align-items: center; padding: 12px 0; flex-wrap: wrap; }
+  .logo { font-weight: 800; font-size: 20px; letter-spacing: -.02em; display: flex; align-items: center; gap: 8px; cursor: pointer; }
   .logo b { background: var(--accent); color: #fff; border-radius: 8px; padding: 2px 8px; }
-  .search { flex: 1 1 260px; position: relative; }
-  .search input { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; outline: none; }
+  .search { flex: 1 1 240px; position: relative; }
+  .search i { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 18px; }
+  .search input { width: 100%; height: 40px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 0 12px 0 36px; outline: none; }
   .search input:focus { border-color: var(--accent); }
-  .mine { display: flex; gap: 6px; }
-  .mine button, .sel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; cursor: pointer; white-space: nowrap; }
-  .mine button.on { border-color: var(--accent); background: #251f45; }
-  .count { font-size: 12px; background: var(--panel2); border-radius: 6px; padding: 1px 6px; margin-left: 4px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; white-space: nowrap; }
+  .btn:hover { border-color: var(--line2); }
+  .btn.on { border-color: var(--accent); background: var(--accent-soft); }
+  .btn i { font-size: 19px; }
+  .btn.icon { width: 40px; padding: 0; justify-content: center; position: relative; }
+  .count { font-size: 12px; background: var(--panel2); border-radius: 6px; padding: 1px 6px; }
+  .dot { position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--panel); display: none; }
+  .dot.bad { display: block; background: var(--hot); }
+  .dot.run { display: block; background: var(--accent); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  select.btn { appearance: none; padding-right: 30px; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 16px) 18px, calc(100% - 11px) 18px; background-size: 5px 5px; background-repeat: no-repeat; }
+  @media (max-width: 720px) { .hide-sm { display: none; } }
 
-  .tabs, .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 10px; }
-  .tabs::-webkit-scrollbar, .chips::-webkit-scrollbar { display: none; }
-  .tab { background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px; color: var(--muted); font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 8px 10px; color: var(--muted); font-weight: 600; cursor: pointer; white-space: nowrap; }
   .tab.on { color: var(--text); border-color: var(--accent); }
-  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; color: var(--muted); }
-  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .chip.off { opacity: .45; }
-  .chip small { opacity: .75; margin-left: 4px; }
-  .row2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-bottom: 10px; font-size: 13px; color: var(--muted); }
-  .row2 label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 
-  .status { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; font-size: 12px; }
-  .st { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; color: var(--muted); }
-  .st.ok b { color: var(--good); } .st.bad b { color: var(--hot); }
-  .summary { color: var(--muted); font-size: 13px; margin: 6px 0 14px; }
+  .filterbar { display: flex; gap: 8px; align-items: center; padding: 10px 0 12px; }
+  .plats { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex: 1; }
+  .plats::-webkit-scrollbar { display: none; }
+  .pchip { --c: var(--accent); display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--panel); color: var(--c); cursor: pointer; font-size: 13px; font-weight: 700; white-space: nowrap; flex: none; }
+  .pchip i { font-size: 22px; }
+  .pchip small { color: var(--muted); font-weight: 600; }
+  .pchip .lbl { color: var(--text); font-weight: 600; }
+  .pchip:hover { border-color: var(--c); }
+  .pchip.on { background: var(--c); border-color: var(--c); color: #fff; }
+  .pchip.on small, .pchip.on .lbl { color: rgba(255,255,255,.9); }
+  .pchip.off { opacity: .4; }
+  .pchip.all { color: var(--text); }
+  .pchip.all.on { color: #fff; }
+  .pchip .caret { font-size: 16px; margin-left: -2px; }
+  .badge-n { background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 7px; }
 
+  /* ---------- menus suspensos ---------- */
+  .pop { position: fixed; z-index: 40; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 6px; min-width: 230px; display: none; max-height: 70vh; overflow: auto; }
+  .pop.open { display: block; }
+  .mitem { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; background: transparent; border-radius: 8px; cursor: pointer; text-align: left; font-size: 14px; }
+  .mitem:hover { background: var(--panel2); }
+  .mitem.on { background: var(--accent-soft); font-weight: 600; }
+  .mitem .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .mitem small { margin-left: auto; color: var(--muted); }
+  .mitem.off { opacity: .45; }
+  .msep { height: 1px; background: var(--line); margin: 6px 4px; }
+  .fpanel { padding: 10px; width: 320px; max-width: calc(100vw - 24px); }
+  .fpanel h4 { margin: 8px 2px 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 11px; font-size: 13px; cursor: pointer; }
+  .pill.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .switch { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 2px; font-size: 14px; cursor: pointer; }
+  .switch input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .fpanel .foot { display: flex; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .link { background: none; border: 0; color: var(--accent2); cursor: pointer; padding: 6px 2px; font-weight: 600; }
+
+  /* ---------- lista ---------- */
+  .summary { color: var(--muted); font-size: 13px; margin: 14px 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .active-f { display: inline-flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 10px; font-size: 12px; color: var(--text); }
+  .active-f button { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 15px; padding: 0 4px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; cursor: pointer; transition: transform .12s, border-color .12s; }
-  .card:hover { transform: translateY(-2px); border-color: #3b4558; }
+  .card:hover { transform: translateY(-2px); border-color: var(--line2); }
   .card.wish { border-color: var(--hot); }
   .card.target { box-shadow: 0 0 0 2px var(--good); }
   .thumb { position: relative; aspect-ratio: 16 / 9; background: var(--panel2); overflow: hidden; }
-  .thumb img { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; display: block; }
-  .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 28px; color: rgba(255,255,255,.85); text-align: center; padding: 10px; }
+  .thumb::before { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, var(--shimmer) 50%, transparent 70%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+  .thumb.ok::before, .thumb.err::before, .thumb.noimg::before { display: none; }
+  @keyframes shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+  .thumb img { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .25s; }
+  .thumb.ok img { opacity: 1; }
+  .ph { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; font-weight: 800; font-size: 28px; color: rgba(255,255,255,.85); text-align: center; padding: 10px; }
+  .thumb.err .ph, .thumb.noimg .ph { display: flex; }
   .badge { position: absolute; z-index: 2; font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 6px; }
-  .b-off { top: 8px; right: 8px; background: var(--good); color: #062; }
-  .b-free { top: 8px; right: 8px; background: var(--good); color: #062; }
-  .b-low { bottom: 8px; left: 8px; background: var(--hot); color: #fff; }
-  .b-soon { top: 8px; right: 8px; background: var(--warn); color: #3a2a00; }
+  .b-off, .b-free { top: 8px; right: 8px; background: #2ecc71; color: #053; }
+  .b-low { bottom: 8px; left: 8px; background: #ff4d6d; color: #fff; }
+  .b-soon { top: 8px; right: 8px; background: #f5b942; color: #3a2a00; }
   .acts { position: absolute; z-index: 2; bottom: 8px; right: 8px; display: flex; gap: 6px; }
-  .acts button { width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); cursor: pointer; font-size: 14px; }
-  .acts button.on { background: #fff; }
+  .acts button { width: 32px; height: 32px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; cursor: pointer; font-size: 17px; display: flex; align-items: center; justify-content: center; }
+  .acts button.on.w { color: #ff4d6d; }
+  .acts button.on.c { color: #2ecc71; }
   .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
   .title { font-weight: 600; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .meta { display: flex; gap: 4px; flex-wrap: wrap; }
+  .meta { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
   .tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 2px 6px; border-radius: 5px; background: var(--panel2); color: var(--muted); }
+  .mc { font-size: 11px; font-weight: 800; padding: 2px 6px; border-radius: 5px; color: #fff; }
+  .mc.g { background: #22a355; } .mc.y { background: #d19a12; } .mc.r { background: #d43f3f; }
   .price { margin-top: auto; display: flex; align-items: baseline; gap: 8px; }
   .now { font-size: 18px; font-weight: 800; }
   .was { font-size: 12px; color: var(--muted); text-decoration: line-through; }
   .approx { font-size: 11px; color: var(--warn); }
   .more { font-size: 12px; color: var(--accent2); }
-
   .empty { text-align: center; color: var(--muted); padding: 60px 10px; border: 1px dashed var(--line); border-radius: var(--radius); }
   #sentinel { height: 40px; }
-  .loadmore { display: block; margin: 20px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 18px; cursor: pointer; }
 
-  /* modal */
+  /* ---------- detalhes ---------- */
   .modal { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none; align-items: flex-end; justify-content: center; z-index: 50; }
   .modal.open { display: flex; }
   .sheet { background: var(--panel); width: 100%; max-width: 720px; max-height: 90vh; overflow: auto; border-radius: 16px 16px 0 0; border: 1px solid var(--line); }
@@ -90,10 +159,36 @@
   .sheet h2 { margin: 0 0 6px; font-size: 20px; }
   .offers { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
   .offers td { padding: 10px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
-  .offers .go { background: var(--accent); color: #fff; border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 13px; white-space: nowrap; }
-  .close { position: sticky; top: 0; float: right; margin: 10px; background: rgba(0,0,0,.6); border: 0; border-radius: 50%; width: 34px; height: 34px; cursor: pointer; font-size: 18px; z-index: 2; }
+  .go { background: var(--accent); color: #fff; border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 13px; white-space: nowrap; }
+  .close { position: sticky; top: 0; float: right; margin: 10px; background: rgba(0,0,0,.6); color: #fff; border: 0; border-radius: 50%; width: 34px; height: 34px; cursor: pointer; font-size: 18px; z-index: 3; }
   .target-box { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 14px; flex-wrap: wrap; }
-  .target-box input { width: 110px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  .target-box input { width: 110px; height: 36px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 0 9px; }
+
+  /* ---------- configurações ---------- */
+  #settingsView { display: none; padding: 20px 0; }
+  body.settings #settingsView { display: block; }
+  body.settings #listView, body.settings .listonly { display: none !important; }
+  .sgrid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .scard { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .scard h3 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .scard p { margin: 4px 0 12px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .bigbtn { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; background: var(--accent); color: #fff; border: 0; border-radius: 10px; font-weight: 700; cursor: pointer; }
+  .bigbtn:disabled { opacity: .55; cursor: default; }
+  .bigbtn.busy i { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .srow { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .srow:first-of-type { border-top: 0; }
+  .srow .nm { font-weight: 600; flex: 1; }
+  .srow .ct { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .srow .ok { color: var(--good); } .srow .bad { color: var(--hot); } .srow .run { color: var(--accent); }
+  .srow .msg { display: block; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: 2px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg button { border: 0; background: var(--panel); padding: 8px 14px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none; transition: .2s; z-index: 60; max-width: calc(100% - 32px); text-align: center; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 40px; }
   footer a { text-decoration: underline; }
 </style>
@@ -103,102 +198,156 @@
 <header>
   <div class="wrap">
     <div class="top">
-      <div class="logo"><b>LC</b> Deals</div>
-      <div class="search"><input id="q" type="search" placeholder="Buscar jogo ou gift card…" autocomplete="off"></div>
-      <select id="sort" class="sel" aria-label="Ordenar">
+      <div class="logo" id="logo"><b>LC</b> Deals</div>
+      <div class="search listonly"><i class="mdi mdi-magnify"></i><input id="q" type="search" placeholder="Buscar jogo ou gift card…" autocomplete="off"></div>
+      <select id="sort" class="btn listonly" aria-label="Ordenar">
         <option value="hot">Destaques</option>
+        <option value="lowest">Menor preço histórico</option>
+        <option value="price">Preço: mais baixo</option>
+        <option value="price_desc">Preço: mais alto</option>
         <option value="discount">Maior desconto</option>
-        <option value="price">Menor preço</option>
+        <option value="metascore">Metascore</option>
+        <option value="wanted">Mais procurados</option>
         <option value="new">Novidades</option>
-        <option value="ending">Acabando</option>
+        <option value="ending">Acabando em breve</option>
         <option value="az">A–Z</option>
       </select>
-      <div class="mine">
-        <button data-tab="wishlist">♥ Wishlist<span class="count" id="wishCount">0</span></button>
-        <button data-tab="collection">🎮 Coleção<span class="count" id="collCount">0</span></button>
+      <button class="btn" data-tab="wishlist" title="Wishlist"><i class="mdi mdi-heart" style="color:var(--hot)"></i><span class="hide-sm">Wishlist</span><span class="count" id="wishCount">0</span></button>
+      <button class="btn" data-tab="collection" title="Coleção (jogos que já tenho)"><i class="mdi mdi-gamepad-variant"></i><span class="hide-sm">Coleção</span><span class="count" id="collCount">0</span></button>
+      <button class="btn icon" id="settingsBtn" title="Configurações" aria-label="Configurações"><i class="mdi mdi-cog"></i><span class="dot" id="settingsDot"></span></button>
+      <button class="btn icon" id="themeBtn" title="Tema claro / escuro" aria-label="Tema claro / escuro"><i class="mdi mdi-weather-night"></i></button>
+    </div>
+    <div class="listonly">
+      <div class="tabs" id="tabs">
+        <button class="tab on" data-tab="deals">Ofertas</button>
+        <button class="tab" data-tab="free">Grátis</button>
+        <button class="tab" data-tab="gift">Gift cards</button>
+        <button class="tab" data-tab="bundle">Bundles</button>
       </div>
-    </div>
-    <div class="tabs" id="tabs">
-      <button class="tab on" data-tab="deals">Ofertas</button>
-      <button class="tab" data-tab="free">Grátis</button>
-      <button class="tab" data-tab="gift">Gift cards</button>
-      <button class="tab" data-tab="bundle">Bundles</button>
-      <button class="tab" data-tab="lowest">Menor preço histórico</button>
-    </div>
-    <div class="chips" id="platforms"></div>
-    <div class="chips" id="stores"></div>
-    <div class="row2">
-      <select id="maxPrice" class="sel" aria-label="Preço máximo">
-        <option value="">Qualquer preço</option>
-        <option value="10">Até R$ 10</option>
-        <option value="25">Até R$ 25</option>
-        <option value="50">Até R$ 50</option>
-        <option value="100">Até R$ 100</option>
-      </select>
-      <select id="minOff" class="sel" aria-label="Desconto mínimo">
-        <option value="0">Qualquer desconto</option>
-        <option value="50">50% ou mais</option>
-        <option value="75">75% ou mais</option>
-        <option value="90">90% ou mais</option>
-      </select>
-      <label><input type="checkbox" id="dlc"> Mostrar DLCs</label>
-      <label><input type="checkbox" id="hideOwned" checked> Ocultar o que já tenho</label>
+      <div class="filterbar">
+        <div class="plats" id="platforms"></div>
+        <button class="btn" id="filtersBtn"><i class="mdi mdi-tune-variant"></i><span class="hide-sm">Filtros</span><span class="badge-n" id="filtersN" hidden></span></button>
+      </div>
     </div>
   </div>
 </header>
 
 <main class="wrap">
-  <div class="status" id="status"></div>
-  <div class="summary" id="summary">Carregando ofertas…</div>
-  <div class="grid" id="grid"></div>
-  <div id="sentinel"></div>
+  <section id="listView">
+    <div class="summary" id="summary">Carregando ofertas…</div>
+    <div class="grid" id="grid"></div>
+    <div id="sentinel"></div>
+  </section>
+
+  <section id="settingsView">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+      <button class="btn" id="backBtn"><i class="mdi mdi-arrow-left"></i>Voltar</button>
+      <h2 style="margin:0;font-size:22px">Configurações</h2>
+    </div>
+    <div class="sgrid">
+      <div class="scard">
+        <h3><i class="mdi mdi-refresh"></i> Atualização das ofertas</h3>
+        <p>O robô roda sozinho às <b>00h, 06h, 12h e 18h</b> (pode começar até ~1h depois, o GitHub não garante o minuto). Você também pode rodar agora.</p>
+        <div class="row-btns">
+          <button class="bigbtn" id="runBtn"><i class="mdi mdi-refresh"></i><span id="runTxt">Atualizar agora</span></button>
+          <a class="btn" id="runLink" target="_blank" rel="noopener" hidden><i class="mdi mdi-github"></i>Ver no GitHub</a>
+        </div>
+        <p id="runInfo" style="margin-top:12px"></p>
+        <div id="jobsList"></div>
+      </div>
+      <div class="scard">
+        <h3><i class="mdi mdi-store-check"></i> Status das lojas</h3>
+        <p>Resultado da última coleta de cada loja.</p>
+        <div id="storeStatus"></div>
+      </div>
+      <div class="scard">
+        <h3><i class="mdi mdi-palette"></i> Aparência</h3>
+        <p>Tema do site.</p>
+        <div class="seg" id="themeSeg">
+          <button data-theme-set="light"><i class="mdi mdi-white-balance-sunny"></i>Claro</button>
+          <button data-theme-set="dark"><i class="mdi mdi-weather-night"></i>Escuro</button>
+          <button data-theme-set="auto"><i class="mdi mdi-theme-light-dark"></i>Automático</button>
+        </div>
+      </div>
+      <div class="scard">
+        <h3><i class="mdi mdi-content-save"></i> Seus dados</h3>
+        <p>Wishlist e coleção ficam salvas só neste navegador. Faça um backup para levar para outro aparelho.</p>
+        <p id="dataInfo"></p>
+        <div class="row-btns">
+          <button class="btn" id="exportBtn"><i class="mdi mdi-download"></i>Exportar backup</button>
+          <label class="btn"><i class="mdi mdi-upload"></i>Importar backup<input type="file" id="importInput" accept="application/json" hidden></label>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <footer>Preços de PC fornecidos pela API do <a href="https://isthereanydeal.com" target="_blank" rel="noopener">IsThereAnyDeal</a>. Consoles direto das lojas oficiais (Nintendo, Microsoft, Sony). Uso pessoal.</footer>
 </main>
 
+<div class="pop" id="pcMenu" role="menu"></div>
+<div class="pop fpanel" id="filtersPanel"></div>
 <div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast"></div>
 
 <script>
 // ======================================================================
-// Configuração — cole aqui a URL e a chave "anon public" do Supabase
+// Configuração — fica no arquivo config.js
 // ======================================================================
-const SUPABASE_URL = 'https://qnejqlblwzwrfvbsvean.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFuZWpxbGJsd3p3cmZ2YnN2ZWFuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwOTkxMjgsImV4cCI6MjEwNzY3NTEyOH0.7ZfiTvQUcEtDl3QwdMzXdSfyDfmZ1yF3OgkJStiJkX0';
+const CFG = window.LC_CONFIG || {};
+const SUPABASE_URL = CFG.supabaseUrl || 'https://qnejqlblwzwrfvbsvean.supabase.co';
+const SUPABASE_ANON_KEY = CFG.anonKey || '';
 
 const STORES = {
-  steam:          { label: 'Steam',          color: '#1b5e8c' },
-  epic:           { label: 'Epic Games',     color: '#3a3a3a' },
+  steam:          { label: 'Steam',          color: '#1a9fff' },
+  epic:           { label: 'Epic Games',     color: '#4a4a4a' },
   nuuvem:         { label: 'Nuuvem',         color: '#0e8fa8' },
-  humble:         { label: 'Humble',         color: '#a8323e' },
-  instant_gaming: { label: 'Instant Gaming', color: '#d9661a' },
+  instant_gaming: { label: 'Instant Gaming', color: '#ff5400' },
+  humble:         { label: 'Humble Bundle',  color: '#cc2929' },
   nintendo:       { label: 'Nintendo eShop', color: '#e60012' },
   xbox:           { label: 'Xbox',           color: '#107c10' },
   playstation:    { label: 'PS Store',       color: '#0070d1' },
-  outras:         { label: 'Outras',         color: '#555' },
+  outras:         { label: 'Outras',         color: '#666' },
 };
-const PLATFORMS = { all: 'Todas', pc: 'PC', switch: 'Switch', xbox: 'Xbox', ps: 'PlayStation' };
-const PLATFORM_LABEL = { ...PLATFORMS, giftcard: 'Gift card' };
+const PC_STORES = ['steam', 'epic', 'nuuvem', 'instant_gaming', 'humble', 'outras'];
+const PLATFORMS = {
+  switch: { icon: 'mdi-nintendo-switch',      color: '#e60012', title: 'Nintendo Switch' },
+  ps:     { icon: 'mdi-sony-playstation',     color: '#0070d1', title: 'PlayStation' },
+  xbox:   { icon: 'mdi-microsoft-xbox',       color: '#1f9b1f', title: 'Xbox' },
+  pc:     { icon: 'mdi-desktop-tower-monitor', color: '#8b5cf6', title: 'PC' },
+};
+const PLATFORM_LABEL = { switch: 'Switch', ps: 'PlayStation', xbox: 'Xbox', pc: 'PC', giftcard: 'Gift card' };
 const PLATFORM_SOURCE = { switch: 'nintendo', xbox: 'xbox', ps: 'playstation' };
-let runsBySource = {};
+const SOURCE_NAMES = { itad: 'PC (Steam, Epic, Nuuvem, Humble)', epic_free: 'Epic grátis', xbox: 'Xbox', nintendo: 'Nintendo', playstation: 'PlayStation', nuuvem_gift: 'Gift cards Nuuvem', instant_gaming: 'Instant Gaming', meta: 'Metascore e mais procurados' };
+const PRICE_OPTS = [['', 'Qualquer'], ['10', 'Até R$ 10'], ['25', 'Até R$ 25'], ['50', 'Até R$ 50'], ['100', 'Até R$ 100'], ['200', 'Até R$ 200']];
+const OFF_OPTS = [[0, 'Qualquer'], [30, '30%+'], [50, '50%+'], [75, '75%+'], [90, '90%+']];
+const MC_OPTS = [[0, 'Qualquer'], [70, '70+'], [80, '80+'], [90, '90+']];
 const PAGE = 60;
 
-const state = { tab: 'deals', platform: 'all', store: 'all', q: '', sort: 'hot', maxPrice: '', minOff: 0, dlc: false, hideOwned: true, shown: PAGE };
-let rows = [];          // todas as ofertas (uma por loja)
+const state = { tab: 'deals', platform: 'all', store: 'all', q: '', sort: 'hot', maxPrice: '', minOff: 0, minMc: 0, dlc: false, hideOwned: true, shown: PAGE };
+let rows = [];
+let meta = new Map();   // game_key -> { m: metascore, w: desejos }
 let dlcLoaded = false;
-let groups = [];        // resultado filtrado e agrupado por jogo
+let groups = [];
+let runs = [];
+let runsBySource = {};
 
-// ---------- armazenamento local (wishlist / coleção) ----------
+// ---------- armazenamento local ----------
 function load(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
 function persist(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* modo privado */ } }
-let wishlist = load('lc_wish_v2', {});      // { game_key: precoAlvo | null }
-let collection = load('lc_coll_v2', {});    // { game_key: true }
+let wishlist = load('lc_wish_v2', {});
+let collection = load('lc_coll_v2', {});
 
 // ---------- utilidades ----------
+const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const brl = v => v == null ? '—' : Number(v) === 0 ? 'Grátis' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const num = n => Number(n || 0).toLocaleString('pt-BR');
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const initials = t => String(t).replace(/[^A-Za-z0-9 ]/g, '').split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
 function hue(t) { let h = 0; for (const c of String(t)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 function ago(iso) {
-  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (!iso) return '—';
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
   return m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`;
 }
 function until(iso) {
@@ -206,69 +355,100 @@ function until(iso) {
   const d = new Date(iso); if (isNaN(d)) return '';
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
+const storeInfo = s => STORES[s] || { label: s, color: '#666' };
 
-// Imagem com fallback: se a capa quebrar, mostra um bloco colorido com as iniciais
-function thumbHTML(r, extra = '') {
+// Gift cards: a "plataforma" vem do nome do cartão
+function platformOf(r) {
+  if (r.category !== 'gift_card') return r.platform;
+  const t = norm(r.title);
+  if (/nintendo|eshop|switch/.test(t)) return 'switch';
+  if (/psn|playstation|ps plus|ps5|ps4/.test(t)) return 'ps';
+  if (/xbox|game ?pass/.test(t)) return 'xbox';
+  if (/steam|epic|pc|windows/.test(t)) return 'pc';
+  return 'other';
+}
+
+// ---------- capas (CDN gratuito reduz e converte para WebP; se falhar usa a original) ----------
+const IMG_CDN = true;
+function imgUrl(url, w) {
+  if (!url || !IMG_CDN) return url;
+  return `https://wsrv.nl/?url=${encodeURIComponent(url)}&w=${w}&h=${Math.round(w * 9 / 16)}&fit=cover&a=attention&output=webp&q=72`;
+}
+function imgErr(el) {
+  const orig = el.getAttribute('data-orig');
+  if (orig) { el.removeAttribute('data-orig'); el.src = orig; return; }
+  el.parentNode.classList.add('err');
+  el.remove();
+}
+function thumbHTML(r, extra = '', { w = 400, eager = false } = {}) {
   const ph = `<div class="ph" style="background:linear-gradient(135deg,hsl(${hue(r.title)} 45% 28%),hsl(${(hue(r.title) + 40) % 360} 50% 18%))">${esc(initials(r.title))}</div>`;
-  const img = r.image_url ? `<img src="${esc(r.image_url)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
-  return `<div class="thumb">${ph}${img}${extra}</div>`;
+  const img = r.image_url
+    ? `<img src="${esc(imgUrl(r.image_url, w))}" data-orig="${esc(r.image_url)}" alt="" ${eager ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"'} decoding="async" referrerpolicy="no-referrer" onload="this.parentNode.classList.add('ok')" onerror="imgErr(this)">`
+    : '';
+  return `<div class="thumb ${r.image_url ? '' : 'noimg'}">${ph}${img}${extra}</div>`;
 }
 
 // ---------- dados ----------
 let sb = null;
-async function fetchAll(query) {
-  const out = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await query().range(from, from + 999);
-    if (error) throw error;
-    out.push(...data);
-    if (data.length < 1000) break;
+async function fetchAll(table, cols, filter = q => q, order = 'id') {
+  const { count, error } = await filter(sb.from(table).select(order, { count: 'exact', head: true }));
+  if (error) throw error;
+  const pages = Math.ceil((count || 0) / 1000);
+  const parts = new Array(pages);
+  let next = 0;
+  async function worker() {
+    while (next < pages) {
+      const p = next++;
+      const { data, error: e } = await filter(sb.from(table).select(cols)).order(order).range(p * 1000, p * 1000 + 999);
+      if (e) throw e;
+      parts[p] = data;
+    }
   }
-  return out;
+  await Promise.all(Array.from({ length: Math.min(6, pages) }, worker));
+  return parts.flat();
 }
 const COLS = 'id,game_key,title,store,platform,category,original_price,discount_price,discount_pct,currency,history_low,own_low,is_lowest_ever,image_url,deal_url,expires_at,first_seen_at';
 
 async function loadData() {
   if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.includes('COLE_SUA')) {
-    document.getElementById('summary').textContent = 'Falta colar a chave anon do Supabase no index.html.';
+    $('summary').textContent = 'Falta colar a chave anon do Supabase no arquivo config.js.';
     return;
   }
-  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  if (!sb) sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   try {
-    const [deals, runs] = await Promise.all([
-      fetchAll(() => sb.from('deals').select(COLS).neq('category', 'dlc').order('id')),
+    const [deals, r] = await Promise.all([
+      fetchAll('deals', COLS, q => q.neq('category', 'dlc')),
       sb.from('sync_runs').select('*'),
     ]);
     rows = deals;
-    renderStatus(runs.data || []);
+    runs = r.data || [];
+    runsBySource = Object.fromEntries(runs.map(x => [x.source, x]));
+    dlcLoaded = false;
+    if (state.dlc) await loadDlc();
   } catch (e) {
-    document.getElementById('summary').textContent = 'Erro ao ler o Supabase: ' + (e.message || e);
+    $('summary').textContent = 'Erro ao ler o Supabase: ' + (e.message || e);
     return;
   }
   apply();
+  renderSettings();
+  // Notas e popularidade (tabela opcional): carrega depois, sem travar a tela
+  fetchAll('game_meta', 'game_key,metascore,waitlisted', q => q, 'game_key')
+    .then(list => { meta = new Map(list.map(x => [x.game_key, { m: x.metascore, w: x.waitlisted }])); apply(false); })
+    .catch(() => { /* tabela ainda não criada */ });
 }
 
 async function loadDlc() {
   if (dlcLoaded || !sb) return;
-  document.getElementById('summary').textContent = 'Carregando DLCs…';
-  try { rows.push(...await fetchAll(() => sb.from('deals').select(COLS).eq('category', 'dlc').order('id'))); dlcLoaded = true; }
+  $('summary').textContent = 'Carregando DLCs…';
+  try { rows.push(...await fetchAll('deals', COLS, q => q.eq('category', 'dlc'))); dlcLoaded = true; }
   catch (e) { console.warn(e); }
 }
 
-function renderStatus(runs) {
-  runsBySource = Object.fromEntries(runs.map(r => [r.source, r]));
-  const names = { itad: 'PC', epic_free: 'Epic grátis', xbox: 'Xbox', nintendo: 'Nintendo', playstation: 'PlayStation', nuuvem_gift: 'Gift Nuuvem', instant_gaming: 'Instant Gaming' };
-  document.getElementById('status').innerHTML = runs
-    .sort((a, b) => (names[a.source] || a.source).localeCompare(names[b.source] || b.source))
-    .map(r => `<span class="st ${r.ok ? 'ok' : 'bad'}" title="${esc(r.message || '')}"><b>●</b> ${esc(names[r.source] || r.source)} · ${r.ok ? r.count : 'falhou'} · ${ago(r.ran_at)}</span>`)
-    .join('');
-}
-
-// ---------- filtros e agrupamento ----------
+// ---------- filtros ----------
 function rowPasses(r, ignore = '') {
   if (!state.dlc && r.category === 'dlc') return false;
-  if (ignore !== 'platform' && state.platform !== 'all' && r.platform !== state.platform) return false;
-  if (ignore !== 'store' && state.store !== 'all' && r.store !== state.store) return false;
+  if (ignore !== 'platform' && state.platform !== 'all' && platformOf(r) !== state.platform) return false;
+  if (ignore !== 'platform' && ignore !== 'store' && state.store !== 'all' && r.store !== state.store) return false;
   if (state.maxPrice !== '' && Number(r.discount_price) > Number(state.maxPrice)) return false;
   if (state.minOff && Number(r.discount_pct || 0) < state.minOff) return false;
   switch (state.tab) {
@@ -276,20 +456,21 @@ function rowPasses(r, ignore = '') {
     case 'free': return r.category === 'free_game' || r.category === 'free_upcoming';
     case 'gift': return r.category === 'gift_card';
     case 'bundle': return r.category === 'bundle';
-    case 'lowest': return r.is_lowest_ever && r.category !== 'gift_card';
-    default: return true; // wishlist / coleção filtram depois, por jogo
+    default: return true;
   }
 }
+const groupKey = r => (r.category === 'bundle' || r.category === 'gift_card' ? r.id : r.game_key || r.id);
 
-function apply() {
+function apply(resetScroll = true) {
   if (state.store !== 'all' && !rows.some(r => r.store === state.store && rowPasses(r, 'store'))) state.store = 'all';
-  buildChips();
-  const q = state.q.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  buildPlatforms();
+  updateFiltersBadge();
+  const q = norm(state.q.trim());
   const map = new Map();
   for (const r of rows) {
     if (!rowPasses(r)) continue;
-    if (q && !(r.game_key.includes(q) || r.title.toLowerCase().includes(q))) continue;
-    const k = r.category === 'bundle' || r.category === 'gift_card' ? r.id : r.game_key || r.id;
+    if (q && !(r.game_key.includes(q) || norm(r.title).includes(q))) continue;
+    const k = groupKey(r);
     if (!map.has(k)) map.set(k, { key: k, offers: [] });
     map.get(k).offers.push(r);
   }
@@ -298,29 +479,47 @@ function apply() {
     g.best = g.offers[0];
     g.maxOff = Math.max(...g.offers.map(o => o.discount_pct || 0));
     g.lowest = g.offers.some(o => o.is_lowest_ever);
+    const mt = meta.get(g.key);
+    g.mc = mt?.m ?? null;
+    g.want = mt?.w ?? null;
     return g;
   }).filter(g => {
     if (state.tab === 'wishlist') return g.key in wishlist;
     if (state.tab === 'collection') return !!collection[g.key];
     if (state.hideOwned && collection[g.key]) return false;
+    if (state.sort === 'lowest' && !g.lowest) return false;
+    if (state.minMc && !(g.mc >= state.minMc)) return false;
     return true;
   });
 
+  const price = g => Number(g.best.discount_price);
+  const hot = (a, b) => (b.lowest - a.lowest) || (b.maxOff - a.maxOff) || (price(a) - price(b));
+  const nullsLast = (va, vb) => (va == null) - (vb == null) || (vb ?? 0) - (va ?? 0);
   const by = {
-    hot: (a, b) => (b.lowest - a.lowest) || (b.maxOff - a.maxOff) || (Number(a.best.discount_price) - Number(b.best.discount_price)),
+    hot,
+    lowest: (a, b) => (b.maxOff - a.maxOff) || (price(a) - price(b)),
+    price: (a, b) => price(a) - price(b),
+    price_desc: (a, b) => price(b) - price(a),
     discount: (a, b) => b.maxOff - a.maxOff,
-    price: (a, b) => Number(a.best.discount_price) - Number(b.best.discount_price),
+    metascore: (a, b) => nullsLast(a.mc, b.mc) || hot(a, b),
+    wanted: (a, b) => nullsLast(a.want, b.want) || hot(a, b),
     new: (a, b) => new Date(b.best.first_seen_at) - new Date(a.best.first_seen_at),
     ending: (a, b) => (new Date(a.best.expires_at || '9999-12-31')) - (new Date(b.best.expires_at || '9999-12-31')),
     az: (a, b) => a.best.title.localeCompare(b.best.title, 'pt-BR'),
-  }[state.sort];
+  }[state.sort] || hot;
   groups.sort(by);
-  state.shown = PAGE;
+  if (resetScroll) state.shown = PAGE;
   render();
 }
 
 // ---------- renderização ----------
-function cardHTML(g) {
+function mcTag(score) {
+  if (score == null) return '';
+  const cls = score >= 75 ? 'g' : score >= 50 ? 'y' : 'r';
+  return `<span class="mc ${cls}" title="Metascore">${score}</span>`;
+}
+
+function cardHTML(g, i = 99) {
   const r = g.best;
   const free = Number(r.discount_price) === 0;
   const stores = [...new Set(g.offers.map(o => o.store))];
@@ -332,16 +531,18 @@ function cardHTML(g) {
   else if (free) badge = '<span class="badge b-free">GRÁTIS</span>';
   else if (r.discount_pct > 0) badge = `<span class="badge b-off">-${r.discount_pct}%</span>`;
   const low = g.lowest ? '<span class="badge b-low">MENOR PREÇO</span>' : '';
+  const inWish = g.key in wishlist; const owned = !!collection[g.key];
   const acts = `<div class="acts">
-      <button data-act="wish" data-key="${esc(g.key)}" class="${g.key in wishlist ? 'on' : ''}" title="Wishlist" aria-label="Wishlist">${g.key in wishlist ? '❤️' : '🤍'}</button>
-      <button data-act="coll" data-key="${esc(g.key)}" class="${collection[g.key] ? 'on' : ''}" title="Já tenho" aria-label="Coleção">🎮</button>
+      <button data-act="wish" data-key="${esc(g.key)}" class="w ${inWish ? 'on' : ''}" title="Wishlist" aria-label="Wishlist"><i class="mdi ${inWish ? 'mdi-heart' : 'mdi-heart-outline'}"></i></button>
+      <button data-act="coll" data-key="${esc(g.key)}" class="c ${owned ? 'on' : ''}" title="Já tenho" aria-label="Coleção"><i class="mdi ${owned ? 'mdi-check-circle' : 'mdi-gamepad-variant-outline'}"></i></button>
     </div>`;
-  return `<article class="card ${g.key in wishlist ? 'wish' : ''} ${hitTarget ? 'target' : ''}" data-key="${esc(g.key)}">
-    ${thumbHTML(r, badge + low + acts)}
+  return `<article class="card ${inWish ? 'wish' : ''} ${hitTarget ? 'target' : ''}" data-key="${esc(g.key)}">
+    ${thumbHTML(r, badge + low + acts, { eager: i < 10 })}
     <div class="body">
       <div class="title">${esc(r.title)}</div>
       <div class="meta">
-        ${stores.map(s => `<span class="tag" style="background:${(STORES[s] || STORES.outras).color};color:#fff">${esc((STORES[s] || { label: s }).label)}</span>`).join('')}
+        ${mcTag(g.mc)}
+        ${stores.map(s => `<span class="tag" style="background:${storeInfo(s).color};color:#fff">${esc(storeInfo(s).label)}</span>`).join('')}
         ${plats.map(p => `<span class="tag">${esc(PLATFORM_LABEL[p] || p)}</span>`).join('')}
       </div>
       <div class="price">
@@ -354,79 +555,136 @@ function cardHTML(g) {
   </article>`;
 }
 
+function activeFilterChips() {
+  const out = [];
+  if (state.store !== 'all') out.push(['store', storeInfo(state.store).label]);
+  if (state.maxPrice !== '') out.push(['maxPrice', `Até R$ ${state.maxPrice}`]);
+  if (state.minOff) out.push(['minOff', `${state.minOff}%+ desconto`]);
+  if (state.minMc) out.push(['minMc', `Metascore ${state.minMc}+`]);
+  if (state.dlc) out.push(['dlc', 'Com DLCs']);
+  if (!state.hideOwned) out.push(['hideOwned', 'Mostrando os que já tenho']);
+  return out;
+}
+
 function render() {
-  const grid = document.getElementById('grid');
+  const grid = $('grid');
   const total = groups.length;
-  document.getElementById('summary').textContent = total
-    ? `${total.toLocaleString('pt-BR')} jogos/itens · ${rows.length.toLocaleString('pt-BR')} ofertas no banco`
-    : '';
+  const chips = activeFilterChips().map(([k, l]) => `<span class="active-f">${esc(l)}<button data-clear="${k}" aria-label="Remover filtro">×</button></span>`).join('');
+  let note = '';
+  if ((state.sort === 'metascore' || state.minMc) && meta.size === 0) note = ' · as notas ainda não foram coletadas';
+  $('summary').innerHTML = `<span>${num(total)} jogos/itens${note}</span>${chips}`;
   if (!total) {
-    const msg = state.tab === 'wishlist' ? 'Sua wishlist está vazia. Toque no 🤍 de um jogo.'
-      : state.tab === 'collection' ? 'Nenhum jogo marcado como "já tenho".'
-      : (() => {
-          const src = PLATFORM_SOURCE[state.platform];
-          const run = src && runsBySource[src];
-          if (run && !run.ok) return `A coleta de ${esc(PLATFORMS[state.platform])} falhou na última execução: ${esc(run.message || 'sem detalhes')}`;
-          return 'Nada encontrado com esses filtros.';
-        })();
+    let msg = 'Nada encontrado com esses filtros.';
+    if (state.tab === 'wishlist') msg = 'Sua wishlist está vazia. Toque no coração de um jogo.';
+    else if (state.tab === 'collection') msg = 'Nenhum jogo marcado como "já tenho".';
+    else {
+      const run = runsBySource[PLATFORM_SOURCE[state.platform]];
+      if (run && !run.ok) msg = `A coleta de ${esc(PLATFORMS[state.platform].title)} falhou na última execução: ${esc(run.message || 'sem detalhes')}`;
+    }
     grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${msg}</div>`;
     return;
   }
-  grid.innerHTML = groups.slice(0, state.shown).map(cardHTML).join('');
+  grid.innerHTML = groups.slice(0, state.shown).map((g, i) => cardHTML(g, i)).join('');
 }
 
 function renderMore() {
-  if (state.shown >= groups.length) return;
-  const grid = document.getElementById('grid');
+  if (document.body.classList.contains('settings') || state.shown >= groups.length) return;
   const next = groups.slice(state.shown, state.shown + PAGE);
   state.shown += PAGE;
-  grid.insertAdjacentHTML('beforeend', next.map(cardHTML).join(''));
+  $('grid').insertAdjacentHTML('beforeend', next.map(g => cardHTML(g)).join(''));
 }
 
-function buildChips() {
-  const platCount = {}; const storeCount = {};
-  for (const r of rows) {
-    if (rowPasses(r, 'platform')) platCount[r.platform] = (platCount[r.platform] || 0) + 1;
-    if (rowPasses(r, 'store')) storeCount[r.store] = (storeCount[r.store] || 0) + 1;
+// ---------- plataformas (ícones) ----------
+function countsBy(fn, ignore) {
+  const c = {};
+  for (const r of rows) if (rowPasses(r, ignore)) { const k = fn(r); c[k] = (c[k] || 0) + 1; }
+  return c;
+}
+function buildPlatforms() {
+  const pc = countsBy(platformOf, 'platform');
+  const total = Object.values(pc).reduce((a, b) => a + b, 0);
+  let html = `<button class="pchip all ${state.platform === 'all' ? 'on' : ''}" data-platform="all">Todas<small>${num(total)}</small></button>`;
+  for (const [k, p] of Object.entries(PLATFORMS)) {
+    const n = pc[k] || 0;
+    const isPc = k === 'pc';
+    const lbl = isPc && state.platform === 'pc' && state.store !== 'all' ? `<span class="lbl">${esc(storeInfo(state.store).label)}</span>` : '';
+    html += `<button class="pchip ${state.platform === k ? 'on' : ''} ${n ? '' : 'off'}" style="--c:${p.color}" title="${esc(p.title)}" aria-label="${esc(p.title)}" ${isPc ? 'data-pcmenu="1" aria-haspopup="menu"' : `data-platform="${k}"`}><i class="mdi ${p.icon}"></i>${lbl}<small>${num(n)}</small>${isPc ? '<i class="mdi mdi-chevron-down caret"></i>' : ''}</button>`;
   }
-  const platTotal = Object.values(platCount).reduce((a, b) => a + b, 0);
-  const storeTotal = Object.values(storeCount).reduce((a, b) => a + b, 0);
-  document.getElementById('platforms').innerHTML = Object.entries(PLATFORMS).map(([k, v]) => {
-    const n = k === 'all' ? platTotal : (platCount[k] || 0);
-    return `<button class="chip ${state.platform === k ? 'on' : ''} ${n ? '' : 'off'}" data-platform="${k}">${v}<small>${n.toLocaleString('pt-BR')}</small></button>`;
-  }).join('');
-  const present = Object.keys(storeCount).filter(s => storeCount[s] > 0 || s === state.store)
-    .sort((a, b) => (STORES[a]?.label || a).localeCompare(STORES[b]?.label || b));
-  document.getElementById('stores').innerHTML = [`<button class="chip ${state.store === 'all' ? 'on' : ''}" data-store="all">Todas as lojas<small>${storeTotal.toLocaleString('pt-BR')}</small></button>`]
-    .concat(present.map(s => `<button class="chip ${state.store === s ? 'on' : ''}" data-store="${esc(s)}">${esc((STORES[s] || { label: s }).label)}<small>${(storeCount[s] || 0).toLocaleString('pt-BR')}</small></button>`)).join('');
+  $('platforms').innerHTML = html;
 }
 
+// ---------- menus suspensos ----------
+function placePop(pop, anchor, alignRight = false) {
+  const r = anchor.getBoundingClientRect();
+  pop.classList.add('open');
+  const w = pop.offsetWidth;
+  let left = alignRight ? r.right - w : r.left;
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${r.bottom + 6}px`;
+}
+function closePops() { document.querySelectorAll('.pop.open').forEach(p => p.classList.remove('open')); }
+
+function openPcMenu(anchor) {
+  const sc = countsBy(r => r.store, 'platform');
+  const pcRows = rows.filter(r => platformOf(r) === 'pc' && rowPasses(r, 'platform'));
+  const byStore = {}; pcRows.forEach(r => { byStore[r.store] = (byStore[r.store] || 0) + 1; });
+  const pcTotal = pcRows.length;
+  const items = PC_STORES.filter(s => byStore[s] || s !== 'outras');
+  $('pcMenu').innerHTML = `
+    <button class="mitem ${state.platform === 'pc' && state.store === 'all' ? 'on' : ''}" data-pcstore="all"><i class="mdi mdi-desktop-tower-monitor" style="color:${PLATFORMS.pc.color};font-size:18px"></i>Todas as lojas de PC<small>${num(pcTotal)}</small></button>
+    <div class="msep"></div>
+    ${items.map(s => `<button class="mitem ${state.platform === 'pc' && state.store === s ? 'on' : ''} ${byStore[s] ? '' : 'off'}" data-pcstore="${s}"><span class="sw" style="background:${storeInfo(s).color}"></span>${esc(storeInfo(s).label)}<small>${num(byStore[s] || 0)}</small></button>`).join('')}`;
+  void sc;
+  placePop($('pcMenu'), anchor);
+}
+
+function pillRow(name, opts, current) {
+  return `<div class="pills">${opts.map(([v, l]) => `<button class="pill ${String(current) === String(v) ? 'on' : ''}" data-f="${name}" data-v="${v}">${l}</button>`).join('')}</div>`;
+}
+function renderFilters() {
+  $('filtersPanel').innerHTML = `
+    <h4>Preço</h4>${pillRow('maxPrice', PRICE_OPTS, state.maxPrice)}
+    <h4>Desconto mínimo</h4>${pillRow('minOff', OFF_OPTS, state.minOff)}
+    <h4>Metascore mínimo</h4>${pillRow('minMc', MC_OPTS, state.minMc)}
+    <h4>Mostrar</h4>
+    <label class="switch">Incluir DLCs e expansões<input type="checkbox" data-f="dlc" ${state.dlc ? 'checked' : ''}></label>
+    <label class="switch">Esconder jogos que já tenho<input type="checkbox" data-f="hideOwned" ${state.hideOwned ? 'checked' : ''}></label>
+    <div class="foot"><button class="link" data-f="reset">Limpar filtros</button><button class="link" data-f="close">Pronto</button></div>`;
+}
+function updateFiltersBadge() {
+  const n = activeFilterChips().filter(([k]) => k !== 'store').length;
+  const b = $('filtersN'); b.hidden = !n; b.textContent = n;
+}
+
+// ---------- abas ----------
 function setTab(tab) {
   state.tab = tab;
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  showSettings(false);
   apply();
 }
-
 function updateCounts() {
-  document.getElementById('wishCount').textContent = Object.keys(wishlist).length;
-  document.getElementById('collCount').textContent = Object.keys(collection).length;
+  $('wishCount').textContent = Object.keys(wishlist).length;
+  $('collCount').textContent = Object.keys(collection).length;
 }
 
-// ---------- detalhes do jogo (todas as lojas, sem filtro) ----------
+// ---------- detalhes do jogo ----------
 function openDetails(key) {
-  const offers = rows.filter(r => (r.category === 'bundle' || r.category === 'gift_card' ? r.id : r.game_key) === key)
-    .sort((a, b) => Number(a.discount_price) - Number(b.discount_price));
+  const offers = rows.filter(r => groupKey(r) === key).sort((a, b) => Number(a.discount_price) - Number(b.discount_price));
   if (!offers.length) return;
   const r = offers[0];
   const target = wishlist[key];
-  document.getElementById('sheet').innerHTML = `
+  const mt = meta.get(key);
+  $('sheet').innerHTML = `
     <button class="close" data-act="close" aria-label="Fechar">✕</button>
-    ${thumbHTML(r)}
+    ${thumbHTML(r, '', { w: 720, eager: true })}
     <div class="sheet-body">
       <h2>${esc(r.title)}</h2>
+      <div class="meta">${mcTag(mt?.m)}${mt?.w ? `<span class="tag" title="Pessoas com o jogo na wishlist do IsThereAnyDeal"><i class="mdi mdi-heart"></i> ${num(mt.w)} desejam</span>` : ''}</div>
       <table class="offers">
         ${offers.map(o => `<tr>
-          <td><span class="tag" style="background:${(STORES[o.store] || STORES.outras).color};color:#fff">${esc((STORES[o.store] || { label: o.store }).label)}</span>
+          <td><span class="tag" style="background:${storeInfo(o.store).color};color:#fff">${esc(storeInfo(o.store).label)}</span>
               <span class="tag">${esc(PLATFORM_LABEL[o.platform] || o.platform)}</span></td>
           <td><b>${brl(o.discount_price)}</b> ${o.original_price && Number(o.original_price) > Number(o.discount_price) ? `<span class="was">${brl(o.original_price)}</span>` : ''}
               ${o.discount_pct ? `<div class="approx" style="color:var(--good)">-${o.discount_pct}%</div>` : ''}</td>
@@ -437,56 +695,212 @@ function openDetails(key) {
         </tr>`).join('')}
       </table>
       <div class="target-box">
-        <button class="chip ${key in wishlist ? 'on' : ''}" data-act="wish" data-key="${esc(key)}">${key in wishlist ? '❤️ Na wishlist' : '🤍 Adicionar à wishlist'}</button>
-        <button class="chip ${collection[key] ? 'on' : ''}" data-act="coll" data-key="${esc(key)}">🎮 ${collection[key] ? 'Já tenho' : 'Marcar como já tenho'}</button>
+        <button class="btn ${key in wishlist ? 'on' : ''}" data-act="wish" data-key="${esc(key)}"><i class="mdi ${key in wishlist ? 'mdi-heart' : 'mdi-heart-outline'}" style="color:var(--hot)"></i>${key in wishlist ? 'Na wishlist' : 'Adicionar à wishlist'}</button>
+        <button class="btn ${collection[key] ? 'on' : ''}" data-act="coll" data-key="${esc(key)}"><i class="mdi ${collection[key] ? 'mdi-check-circle' : 'mdi-gamepad-variant-outline'}"></i>${collection[key] ? 'Já tenho' : 'Marcar como já tenho'}</button>
         <span>Avisar abaixo de R$</span>
         <input type="number" min="0" step="0.01" id="targetInput" value="${target ?? ''}" placeholder="ex: 50">
-        <button class="chip" data-act="target" data-key="${esc(key)}">Salvar</button>
+        <button class="btn" data-act="target" data-key="${esc(key)}">Salvar</button>
       </div>
     </div>`;
-  document.getElementById('modal').classList.add('open');
+  $('modal').classList.add('open');
+}
+
+// ---------- configurações ----------
+function showSettings(on) {
+  document.body.classList.toggle('settings', on);
+  $('settingsBtn').classList.toggle('on', on);
+  if (on) { renderSettings(); checkRefresh(); window.scrollTo(0, 0); if (location.hash !== '#config') history.pushState(null, '', '#config'); }
+  else if (location.hash === '#config') history.pushState(null, '', location.pathname);
+}
+window.addEventListener('popstate', () => showSettings(location.hash === '#config'));
+
+function renderSettings() {
+  const order = ['itad', 'epic_free', 'nintendo', 'playstation', 'xbox', 'nuuvem_gift', 'instant_gaming', 'meta'];
+  const list = [...runs].sort((a, b) => order.indexOf(a.source) - order.indexOf(b.source));
+  $('storeStatus').innerHTML = list.length ? list.map(r => `
+    <div class="srow">
+      <i class="mdi ${r.ok ? 'mdi-check-circle ok' : 'mdi-alert-circle bad'}" style="font-size:20px"></i>
+      <span class="nm">${esc(SOURCE_NAMES[r.source] || r.source)}${!r.ok && r.message ? `<span class="msg">${esc(r.message)}</span>` : ''}</span>
+      <span class="ct">${r.ok ? `${num(r.count)} itens` : 'falhou'} · há ${ago(r.ran_at)}</span>
+    </div>`).join('') : '<p>Nenhuma coleta registrada ainda.</p>';
+  $('settingsDot').className = 'dot' + (refreshInfo?.running ? ' run' : runs.some(r => !r.ok) ? ' bad' : '');
+  const t = (() => { try { return localStorage.getItem('lc_theme') || 'auto'; } catch { return 'auto'; } })();
+  document.querySelectorAll('[data-theme-set]').forEach(b => b.classList.toggle('on', b.dataset.themeSet === t));
+  $('dataInfo').textContent = `${Object.keys(wishlist).length} na wishlist · ${Object.keys(collection).length} na coleção`;
+}
+
+// ---------- botão Atualizar (dispara o robô via /api/refresh da Vercel) ----------
+let refreshPoll = null; let wasRunning = false; let refreshInfo = null;
+const JOB_NAMES = SOURCE_NAMES;
+
+function setRefreshUI(j) {
+  refreshInfo = j;
+  const jobs = j.jobs || [];
+  const done = jobs.filter(x => x.status === 'completed').length;
+  const btn = $('runBtn');
+  if (j.running) {
+    btn.classList.add('busy'); btn.disabled = true;
+    $('runTxt').textContent = jobs.length ? `Atualizando… ${done}/${jobs.length}` : 'Atualizando…';
+    $('runInfo').textContent = `Começou às ${new Date(j.run.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}. O site recarrega sozinho quando terminar.`;
+  } else {
+    btn.classList.remove('busy'); btn.disabled = false;
+    $('runTxt').textContent = 'Atualizar agora';
+    $('runInfo').textContent = j.run ? `Última execução: há ${ago(j.run.updated_at)} — ${j.run.conclusion === 'success' ? 'concluída' : j.run.conclusion === 'failure' ? 'com erros' : j.run.conclusion || '—'} (${j.run.event === 'schedule' ? 'automática' : 'manual'}).` : '';
+  }
+  $('runLink').hidden = !j.run?.url;
+  if (j.run?.url) $('runLink').href = j.run.url;
+  $('jobsList').innerHTML = j.running ? jobs.map(x => {
+    const ic = x.status !== 'completed' ? (x.status === 'in_progress' ? 'mdi-loading mdi-spin run' : 'mdi-clock-outline') : x.conclusion === 'success' ? 'mdi-check-circle ok' : x.conclusion === 'skipped' ? 'mdi-minus-circle' : 'mdi-alert-circle bad';
+    return `<div class="srow"><i class="mdi ${ic}" style="font-size:18px"></i><span class="nm">${esc(JOB_NAMES[x.name] || x.name)}</span></div>`;
+  }).join('') : '';
+  $('settingsDot').className = 'dot' + (j.running ? ' run' : runs.some(r => !r.ok) ? ' bad' : '');
+}
+
+async function checkRefresh() {
+  clearTimeout(refreshPoll);
+  try {
+    const r = await fetch('/api/refresh', { cache: 'no-store' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    setRefreshUI(j);
+    if (j.running) { wasRunning = true; refreshPoll = setTimeout(checkRefresh, 15000); }
+    else if (wasRunning) { wasRunning = false; toast('Ofertas atualizadas! Recarregando…'); await loadData(); }
+  } catch (e) {
+    refreshInfo = { error: String(e.message || e) };
+    $('runInfo').textContent = 'O botão ainda não está configurado: falta o GITHUB_TOKEN na Vercel (veja o LEIA-ME).';
+  }
+}
+
+$('runBtn').addEventListener('click', async () => {
+  if (refreshInfo?.error) return toast('Falta configurar o GITHUB_TOKEN na Vercel (veja o LEIA-ME).', 6000);
+  if (refreshInfo?.running) return;
+  const btn = $('runBtn');
+  btn.classList.add('busy'); btn.disabled = true; $('runTxt').textContent = 'Iniciando…';
+  try {
+    const r = await fetch('/api/refresh', { method: 'POST' });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 202) { toast('Robô iniciado! Leva uns 10–20 min. Pode continuar usando o site.', 6000); wasRunning = true; setTimeout(checkRefresh, 6000); return; }
+    toast(j.message || j.error || `Não deu para iniciar (erro ${r.status}).`, 6000);
+  } catch (e) {
+    toast('Não deu para falar com o servidor: ' + (e.message || e), 6000);
+  }
+  checkRefresh();
+});
+
+// ---------- tema ----------
+function setTheme(choice) {
+  try { localStorage.setItem('lc_theme', choice); } catch { /* ignora */ }
+  const t = choice === 'auto' ? (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : choice;
+  document.documentElement.setAttribute('data-theme', t);
+  applyThemeIcon();
+  renderSettings();
+}
+function applyThemeIcon() {
+  const light = document.documentElement.getAttribute('data-theme') === 'light';
+  document.querySelector('#themeBtn i').className = `mdi ${light ? 'mdi-white-balance-sunny' : 'mdi-weather-night'}`;
+  document.querySelector('meta[name="theme-color"]').setAttribute('content', light ? '#f3f5f9' : '#0d1117');
+}
+$('themeBtn').addEventListener('click', () => setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'));
+
+// ---------- backup ----------
+$('exportBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify({ wishlist, collection, exported_at: new Date().toISOString() }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `lc-deals-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$('importInput').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const j = JSON.parse(await f.text());
+    wishlist = { ...wishlist, ...(j.wishlist || {}) }; collection = { ...collection, ...(j.collection || {}) };
+    persist('lc_wish_v2', wishlist); persist('lc_coll_v2', collection);
+    updateCounts(); renderSettings(); apply(false);
+    toast('Backup importado!');
+  } catch { toast('Esse arquivo não é um backup válido.'); }
+  e.target.value = '';
+});
+
+// ---------- aviso rápido ----------
+let toastTimer;
+function toast(msg, ms = 4000) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 
 // ---------- eventos ----------
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-act],[data-tab],[data-platform],[data-store],.card');
-  if (!t) { if (e.target.id === 'modal') document.getElementById('modal').classList.remove('open'); return; }
+  const pcBtn = e.target.closest('[data-pcmenu]');
+  if (pcBtn) { e.stopPropagation(); const open = $('pcMenu').classList.contains('open'); closePops(); if (!open) openPcMenu(pcBtn); return; }
+  const pcStore = e.target.closest('[data-pcstore]');
+  if (pcStore) { state.platform = 'pc'; state.store = pcStore.dataset.pcstore; closePops(); return apply(); }
+  if (e.target.closest('#filtersBtn')) { const open = $('filtersPanel').classList.contains('open'); closePops(); if (!open) { renderFilters(); placePop($('filtersPanel'), $('filtersBtn'), true); } return; }
+  const f = e.target.closest('[data-f]');
+  if (f && f.tagName !== 'INPUT') {
+    const k = f.dataset.f;
+    if (k === 'close') return closePops();
+    if (k === 'reset') { Object.assign(state, { maxPrice: '', minOff: 0, minMc: 0, dlc: false, hideOwned: true }); }
+    else if (k === 'maxPrice') state.maxPrice = f.dataset.v;
+    else state[k] = Number(f.dataset.v);
+    renderFilters(); return apply();
+  }
+  const clr = e.target.closest('[data-clear]');
+  if (clr) {
+    const k = clr.dataset.clear;
+    if (k === 'store') state.store = 'all';
+    else if (k === 'maxPrice') state.maxPrice = '';
+    else if (k === 'hideOwned') state.hideOwned = true;
+    else if (k === 'dlc') state.dlc = false;
+    else state[k] = 0;
+    return apply();
+  }
+  if (!e.target.closest('.pop')) closePops();
+
+  const t = e.target.closest('[data-act],[data-tab],[data-platform],[data-theme-set],.card');
+  if (!t) { if (e.target.id === 'modal') $('modal').classList.remove('open'); return; }
+  if (t.dataset.themeSet) return setTheme(t.dataset.themeSet);
   const act = t.dataset.act;
   if (act) {
     e.stopPropagation();
     const k = t.dataset.key;
-    if (act === 'close') return document.getElementById('modal').classList.remove('open');
+    if (act === 'close') return $('modal').classList.remove('open');
     if (act === 'wish') { if (k in wishlist) delete wishlist[k]; else wishlist[k] = null; persist('lc_wish_v2', wishlist); }
     if (act === 'coll') { if (collection[k]) delete collection[k]; else collection[k] = true; persist('lc_coll_v2', collection); }
-    if (act === 'target') {
-      const v = document.getElementById('targetInput').value;
-      wishlist[k] = v === '' ? null : Number(v); persist('lc_wish_v2', wishlist);
-    }
+    if (act === 'target') { const v = $('targetInput').value; wishlist[k] = v === '' ? null : Number(v); persist('lc_wish_v2', wishlist); toast('Preço-alvo salvo'); }
     updateCounts();
-    if (document.getElementById('modal').classList.contains('open')) openDetails(k);
-    apply();
+    if ($('modal').classList.contains('open')) openDetails(k);
+    apply(false);
     return;
   }
-  if (t.dataset.tab) return setTab(t.dataset.tab);
-  if (t.dataset.platform) { state.platform = t.dataset.platform; return apply(); }
-  if (t.dataset.store) { state.store = t.dataset.store; return apply(); }
+  if (t.dataset.tab) return setTab(state.tab === t.dataset.tab && (t.dataset.tab === 'wishlist' || t.dataset.tab === 'collection') ? 'deals' : t.dataset.tab);
+  if (t.dataset.platform) { state.platform = t.dataset.platform; state.store = 'all'; return apply(); }
   if (t.classList.contains('card')) openDetails(t.dataset.key);
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') document.getElementById('modal').classList.remove('open'); });
+document.addEventListener('change', async e => {
+  const k = e.target.dataset?.f;
+  if (k === 'dlc') { state.dlc = e.target.checked; if (state.dlc) await loadDlc(); apply(); }
+  if (k === 'hideOwned') { state.hideOwned = e.target.checked; apply(); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('modal').classList.remove('open'); closePops(); } });
+window.addEventListener('resize', closePops);
+$('platforms').addEventListener('scroll', closePops);
 
 let qTimer;
-document.getElementById('q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = e.target.value; apply(); }, 200); });
-document.getElementById('sort').addEventListener('change', e => { state.sort = e.target.value; apply(); });
-document.getElementById('maxPrice').addEventListener('change', e => { state.maxPrice = e.target.value; apply(); });
-document.getElementById('minOff').addEventListener('change', e => { state.minOff = Number(e.target.value); apply(); });
-document.getElementById('hideOwned').addEventListener('change', e => { state.hideOwned = e.target.checked; apply(); });
-document.getElementById('dlc').addEventListener('change', async e => { state.dlc = e.target.checked; if (state.dlc) await loadDlc(); apply(); });
+$('q').addEventListener('input', e => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = e.target.value; apply(); }, 200); });
+$('sort').addEventListener('change', e => { state.sort = e.target.value; apply(); });
+$('settingsBtn').addEventListener('click', () => showSettings(!document.body.classList.contains('settings')));
+$('backBtn').addEventListener('click', () => showSettings(false));
+$('logo').addEventListener('click', () => { showSettings(false); setTab('deals'); });
 
 new IntersectionObserver(entries => { if (entries[0].isIntersecting) renderMore(); }, { rootMargin: '600px' })
-  .observe(document.getElementById('sentinel'));
+  .observe($('sentinel'));
 
+applyThemeIcon();
 updateCounts();
+if (location.hash === '#config') showSettings(true);
 loadData();
+checkRefresh();
 </script>
 </body>
 </html>
