@@ -439,7 +439,7 @@ async function collectXboxBrowser() {
   ];
   for (const url of candidates) {
     const before = rows.length;
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 }).catch(e => console.warn('   xbox goto:', e.message));
+    await gotoFast(page, url, { settle: 8000 }).catch(e => console.warn('   xbox goto:', e.message));
     await acceptCookies(page);
     // Dados que vêm embutidos no HTML (primeira página)
     const embedded = await page.evaluate(() => {
@@ -529,6 +529,14 @@ async function loadMoreUntilDone(page, { label, textRe, count, maxClicks = 200 }
   console.log(`   ${label}: fim após ${clicks} cliques (${last} itens, ${Math.round((Date.now() - t0) / 1000)}s)`);
 }
 
+// Abre a página sem esperar a rede "ficar parada" (lojas grandes nunca param: anúncios, estatísticas...).
+// Espera o HTML, dá até 4s para o resto e segue. Antes cada página podia travar 45–60s.
+async function gotoFast(page, url, { settle = 4000, timeout = 30000 } = {}) {
+  const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+  await page.waitForLoadState('networkidle', { timeout: settle }).catch(() => {});
+  return resp;
+}
+
 function jsonCatcher(page, onJson) {
   page.on('response', async res => {
     const ct = res.headers()['content-type'] || '';
@@ -549,7 +557,7 @@ async function collectNintendo() {
   });
   jsonCatcher(page, take);
 
-  await page.goto('https://www.nintendo.com/pt-br/store/sales-and-deals/', { waitUntil: 'networkidle', timeout: 60000 })
+  await gotoFast(page, 'https://www.nintendo.com/pt-br/store/sales-and-deals/', { settle: 10000 })
     .catch(e => console.warn('   nintendo goto:', e.message));
   await acceptCookies(page);
   const nextData = await page.$eval('#__NEXT_DATA__', el => el.textContent).catch(() => null);
@@ -708,7 +716,7 @@ async function collectPlayStation() {
     try { rows.push(...psRowsFrom(await res.json(), seen)); } catch { /* ignora */ }
   });
 
-  await page.goto('https://store.playstation.com/pt-br/pages/deals', { waitUntil: 'networkidle', timeout: 60000 }).catch(e => console.warn('   ps goto:', e.message));
+  await gotoFast(page, 'https://store.playstation.com/pt-br/pages/deals', { settle: 10000 }).catch(e => console.warn('   ps goto:', e.message));
   await sleep(2000);
   const catIds = [...new Set((await page.$$eval('a[href*="/category/"]', as => as.map(a => a.getAttribute('href'))).catch(() => []))
     .map(h => (h.match(/category\/([0-9a-f-]{36})/) || [])[1]).filter(Boolean))];
@@ -717,7 +725,7 @@ async function collectPlayStation() {
 
   // Abre a 1ª categoria para "aprender" a chamada da API
   if (catIds.length && gridReqs.length === 0) {
-    await page.goto(`https://store.playstation.com/pt-br/category/${catIds[0]}/1`, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
+    await gotoFast(page, `https://store.playstation.com/pt-br/category/${catIds[0]}/1`, { settle: 10000 }).catch(() => {});
     await sleep(2000);
   }
 
@@ -747,7 +755,7 @@ async function collectPlayStation() {
     for (const cat of catIds.slice(0, 8)) {
       for (let n = 1; n <= 15; n++) {
         const before = rows.length;
-        await page.goto(`https://store.playstation.com/pt-br/category/${cat}/${n}`, { waitUntil: 'networkidle', timeout: 45000 }).catch(() => {});
+        await gotoFast(page, `https://store.playstation.com/pt-br/category/${cat}/${n}`).catch(() => {});
         const nextData = await page.$eval('#__NEXT_DATA__', el => el.textContent).catch(() => null);
         if (nextData) { try { rows.push(...psRowsFrom(JSON.parse(nextData), seen)); } catch { /* ignora */ } }
         if (rows.length === before) break;
@@ -836,7 +844,7 @@ async function collectNuuvemGiftCards() {
   for (const t of terms) {
     const url = `https://www.nuuvem.com/br-pt/catalog/search/${encodeURIComponent(t)}`;
     try {
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+      await gotoFast(page, url);
       await page.mouse.wheel(0, 4000);
       await sleep(1500);
       const cards = await scrapeCards(page, /nuuvem\.com\/br-pt\/item\//);
@@ -901,7 +909,7 @@ async function collectInstantGaming() {
     for (let pg = 1; pg <= 10; pg++) {
       const u = pg === 1 ? url : `${url}${url.includes('?') ? '&' : '?'}page=${pg}`;
       try {
-        const resp = await page.goto(u, { waitUntil: 'networkidle', timeout: 45000 });
+        const resp = await gotoFast(page, u);
         if (resp && resp.status() >= 400) { console.log(`   instant gaming ${u}: HTTP ${resp.status()}`); break; }
       } catch (e) { console.warn(`   instant gaming ${u}: ${e.message}`); break; }
       // descobre outras páginas de gift cards (marcas) a partir desta
@@ -988,7 +996,7 @@ async function loadedGraphql(page) {
 async function collectLoaded() {
   const page = await newPage();
   const rows = [];
-  await page.goto(LOADED_BASE + 'deals', { waitUntil: 'networkidle', timeout: 60000 }).catch(e => console.warn('   loaded goto:', e.message));
+  await gotoFast(page, LOADED_BASE + 'deals', { settle: 8000 }).catch(e => console.warn('   loaded goto:', e.message));
   await acceptCookies(page);
 
   // 1) API da loja
@@ -1035,7 +1043,7 @@ async function collectLoaded() {
     for (const cat of LOADED_CATS) {
       const seen = new Set(rows.map(r => r.id));
       for (let pg = 1; pg <= 60; pg++) {
-        await page.goto(`${LOADED_BASE}${cat}?p=${pg}&product_list_limit=48`, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
+        await gotoFast(page, `${LOADED_BASE}${cat}?p=${pg}&product_list_limit=48`).catch(() => {});
         const cards = await scrapeCards(page, /loaded\.com\/pt_pt\/[^/?#]+$/, sel);
         let r = await cardsToRows(cards, { source: 'loaded', store: 'loaded' });
         r = r.map(x => {
@@ -1060,7 +1068,7 @@ async function collectLoaded() {
 //    começando pelos mais desejados; em poucos dias todo o catálogo de PC fica coberto.
 //    Consoles aproveitam a nota pelo nome do jogo (game_key).
 // ---------------------------------------------------------------------
-const META_MAX = Number(process.env.META_MAX || 500);
+const META_MAX = Number(process.env.META_MAX || 600);
 
 async function selectAll(table, cols, build = q => q) {
   const out = [];
@@ -1100,16 +1108,23 @@ async function collectMeta() {
   }
 
   // 2) Jogos de PC em oferta agora (o id do ITAD está dentro do id da oferta)
-  const deals = await selectAll('deals', 'id', q => q.eq('source', 'itad').like('id', '%:itad-%'));
-  const ids = [...new Set(deals.map(d => d.id.split(':itad-')[1]).filter(Boolean))];
+  const deals = await selectAll('deals', 'id,discount_pct', q => q.eq('source', 'itad').like('id', '%:itad-%'));
+  const cut = new Map();
+  for (const d of deals) { const id = d.id.split(':itad-')[1]; if (id) cut.set(id, Math.max(cut.get(id) || 0, d.discount_pct || 0)); }
+  const ids = [...cut.keys()];
 
   // 3) Pula os que já têm nota buscada nos últimos 30 dias
   const known = await selectAll('game_meta', 'itad_id,meta_fetched_at', q => q.not('meta_fetched_at', 'is', null));
   const cutoff = Date.now() - 30 * 864e5;
   const fresh = new Set(known.filter(k => Date.parse(k.meta_fetched_at) > cutoff).map(k => k.itad_id));
-  const todo = ids.filter(id => !fresh.has(id))
-    .sort((a, b) => (wl.get(b)?.count || 0) - (wl.get(a)?.count || 0))
-    .slice(0, META_MAX);
+  // Metade da cota para os mais desejados, metade para os maiores descontos (os que aparecem em "Destaques")
+  const pending = ids.filter(id => !fresh.has(id));
+  const byWanted = [...pending].sort((a, b) => (wl.get(b)?.count || 0) - (wl.get(a)?.count || 0));
+  const byCut = [...pending].sort((a, b) => (cut.get(b) || 0) - (cut.get(a) || 0));
+  const todo = [];
+  for (let i = 0; todo.length < META_MAX && i < pending.length; i++) {
+    for (const id of [byCut[i], byWanted[i]]) if (id && !todo.includes(id) && todo.length < META_MAX) todo.push(id);
+  }
   console.log(`   ${ids.length} jogos de PC em oferta; ${ids.filter(id => !fresh.has(id)).length} sem nota; buscando ${todo.length} agora`);
 
   // 4) Detalhes de cada jogo (nota Metascore, nota Steam, quantas pessoas desejam)
@@ -1126,7 +1141,7 @@ async function collectMeta() {
       });
     } catch (e) { console.warn(`   info ${id}: ${e.message}`); }
     if (info.length % 100 === 0 && info.length) console.log(`   ${info.length}/${todo.length}`);
-    await sleep(350);
+    await sleep(150);
   }
   const infoRows = dedupeBy(info, 'game_key', (a, b) => ((b.waitlisted || 0) > (a.waitlisted || 0) ? b : a));
   for (const part of chunk(infoRows, 500)) {
@@ -1168,6 +1183,7 @@ async function main() {
     if (ONLY.length && !ONLY.includes(s.name)) continue;
     console.log(`\n-> ${s.label}`);
     let ok = false; let count = 0; let message = null;
+    const t0 = Date.now();
     try {
       const result = await withTimeout(s.fn(), s.timeout, s.label);
       count = s.custom ? result : await save(result);
@@ -1181,7 +1197,9 @@ async function main() {
     } catch (e) {
       message = e.message;
     }
-    console.log(ok ? `   OK: ${count} ofertas salvas` : `   FALHOU: ${message}`);
+    const secs = Math.round((Date.now() - t0) / 1000);
+    if (ok) message = `tempo: ${secs}s`;
+    console.log(ok ? `   OK: ${count} ofertas salvas em ${secs}s` : `   FALHOU (${secs}s): ${message}`);
     summary.push({ source: s.name, ok, count, message, ran_at: new Date().toISOString() });
     await supabase.from('sync_runs').upsert(summary[summary.length - 1], { onConflict: 'source' });
   }
@@ -1190,7 +1208,7 @@ async function main() {
   console.log('\n=== RESUMO ===');
   for (const r of summary) console.log(`${r.ok ? '✔' : '✘'} ${r.source.padEnd(15)} ${String(r.count).padStart(6)}  ${r.message || ''}`);
   // Só marca o workflow como erro se TUDO falhou
-  if (summary.length && summary.every(r => !r.ok)) process.exit(1);
+  process.exit(summary.length && summary.every(r => !r.ok) ? 1 : 0);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

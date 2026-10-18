@@ -374,6 +374,7 @@ function until(iso) {
   const d = new Date(iso); if (isNaN(d)) return '';
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
+const fmtSecs = n => n < 60 ? `${n}s` : `${Math.floor(n / 60)}min ${String(n % 60).padStart(2, '0')}s`;
 const storeInfo = s => STORES[s] || { label: s, color: '#666' };
 // Logo da loja no menu: se a imagem já traz o nome, mostra só ela; senão logo + nome
 function storeLogo(s) {
@@ -796,7 +797,7 @@ function renderSettings() {
     <div class="srow">
       <i class="mdi ${r.ok ? 'mdi-check-circle ok' : 'mdi-alert-circle bad'}" style="font-size:20px"></i>
       <span class="nm">${esc(SOURCE_NAMES[r.source] || r.source)}${!r.ok && r.message ? `<span class="msg">${esc(r.message)}</span>` : ''}</span>
-      <span class="ct">${r.ok ? `${num(r.count)} itens` : 'falhou'} · há ${ago(r.ran_at)}</span>
+      <span class="ct">${r.ok ? `${num(r.count)} itens` : 'falhou'}${r.ok && /^tempo: \d+s$/.test(r.message || '') ? ` · ${fmtSecs(+r.message.match(/\d+/)[0])}` : ''} · há ${ago(r.ran_at)}</span>
     </div>`).join('') : '<p>Nenhuma coleta registrada ainda.</p>';
   $('settingsDot').className = 'dot' + (refreshInfo?.running ? ' run' : runs.some(r => !r.ok) ? ' bad' : '');
   const t = (() => { try { return localStorage.getItem('lc_theme') || 'auto'; } catch { return 'auto'; } })();
