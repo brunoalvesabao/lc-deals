@@ -2,7 +2,7 @@ name: Sincronizar Ofertas
 
 on:
   schedule:
-    - cron: '17 */6 * * *'   # a cada 6 horas
+    - cron: '0 3,9,15,21 * * *'   # 00h, 06h, 12h e 18h de Brasília (o GitHub usa UTC = Brasília + 3h)
   workflow_dispatch:
     inputs:
       only_sources:
@@ -11,34 +11,52 @@ on:
         default: ''
 
 jobs:
-  sync-deals:
+  sync:
+    # Cada loja roda numa máquina separada, todas ao mesmo tempo
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [itad, epic_free, xbox, nintendo, playstation, nuuvem_gift, instant_gaming, loaded, meta]
+    name: ${{ matrix.source }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
+      - name: Pular se não foi pedida
+        id: check
+        run: |
+          ONLY="${{ github.event.inputs.only_sources }}"
+          if [ -z "$ONLY" ] || echo ",$ONLY," | grep -q ",${{ matrix.source }},"; then echo "run=yes" >> $GITHUB_OUTPUT; else echo "run=no" >> $GITHUB_OUTPUT; fi
+
       - uses: actions/checkout@v4
+        if: steps.check.outputs.run == 'yes'
 
       - uses: actions/setup-node@v4
+        if: steps.check.outputs.run == 'yes'
         with:
           node-version: 22
 
-      - name: Instalar dependências e navegador
-        run: |
-          npm install --no-audit --no-fund
-          npx playwright install --with-deps chromium
+      - name: Instalar dependências
+        if: steps.check.outputs.run == 'yes'
+        run: npm install --no-audit --no-fund
+
+      - name: Instalar navegador
+        if: steps.check.outputs.run == 'yes' && matrix.source != 'itad' && matrix.source != 'epic_free' && matrix.source != 'meta'
+        run: npx playwright install --with-deps chromium
 
       - name: Rodar coletor
+        if: steps.check.outputs.run == 'yes'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ITAD_API_KEY: ${{ secrets.ITAD_API_KEY }}
-          ONLY_SOURCES: ${{ github.event.inputs.only_sources }}
+          ONLY_SOURCES: ${{ matrix.source }}
         run: node sync-deals.mjs
 
-      - name: Guardar prints/HTML das lojas que falharam
-        if: always()
+      - name: Guardar prints/HTML se a loja falhar
+        if: always() && steps.check.outputs.run == 'yes'
         uses: actions/upload-artifact@v4
         with:
-          name: debug-lojas
+          name: debug-${{ matrix.source }}
           path: debug/
           if-no-files-found: ignore
           retention-days: 7
