@@ -777,7 +777,7 @@ async function scrapeCards(page, linkPattern, anchorSelector = 'a[href]') {
   return page.evaluate(({ pattern, anchorSelector }) => {
     const re = new RegExp(pattern);
     const keyOf = h => h.split('?')[0].split('#')[0].replace(/\/$/, '');
-    const MONEY = /(R\$|€|US\$|\$|£)\s*\d[\d.,]*/g;
+    const MONEY = /(?:(?:R\$|€|US\$|\$|£)\s*\d[\d.,]*)|(?:\d[\d.,]*\s?(?:€|R\$|US\$|\$|£))/g;
     const links = [...document.querySelectorAll(anchorSelector)].filter(a => a.href && re.test(a.href));
     const out = [];
     const seen = new Set();
@@ -799,7 +799,7 @@ async function scrapeCards(page, linkPattern, anchorSelector = 'a[href]') {
       const prices = text.match(MONEY) || [];
       if (!prices.length) continue;
       seen.add(key);
-      const disc = (text.match(/-\s?(\d{1,2})\s?%/) || [])[1];
+      const disc = (text.match(/-\s?(\d{1,2})\s?%/) || text.match(/(\d{1,2})\s?%\s?(?:off|desconto)/i) || [])[1];
       const src = img ? (img.currentSrc || img.getAttribute('data-src') || img.src || '') : '';
       out.push({ href: a.href, title, prices, discount: disc ? Number(disc) : 0, img: src && !src.startsWith('data:') ? src : null });
     }
@@ -812,7 +812,7 @@ async function cardsToRows(cards, { source, store }) {
   for (const c of cards) {
     if (!c.title || c.title.length < 3) continue;
     const { isGift } = classifyGiftCard(c.title);
-    const values = c.prices.map(p => ({ v: parseMoney(p), cur: p.includes('R$') ? 'BRL' : p.includes('€') ? 'EUR' : 'USD' })).filter(x => x.v != null);
+    const values = c.prices.map(p => ({ v: parseMoney(p), cur: p.includes('R$') ? 'BRL' : p.includes('€') ? 'EUR' : p.includes('£') ? 'GBP' : 'USD' })).filter(x => x.v != null);
     if (!values.length) continue;
     const cur = values[0].cur;
     const nums = values.map(x => x.v).sort((a, b) => a - b);
@@ -896,8 +896,11 @@ async function collectInstantGaming() {
   const IG = /instant-gaming\.com\/pt\/\d+-/;
   await igPreferBrazil(page);
   const roots = [
-    'https://www.instant-gaming.com/pt/xbox/gift-cards/',
     'https://www.instant-gaming.com/pt/xbox/gift-cards/brands/microsoft-store/',
+    'https://www.instant-gaming.com/pt/xbox/assinaturas/',
+    'https://www.instant-gaming.com/pt/xbox/gift-cards/',
+    'https://www.instant-gaming.com/pt/playstation/assinaturas/',
+    'https://www.instant-gaming.com/pt/nintendo/assinaturas/',
     'https://www.instant-gaming.com/pt/playstation/gift-cards/',
     'https://www.instant-gaming.com/pt/nintendo/gift-cards/',
     'https://www.instant-gaming.com/pt/pc/gift-cards/',
@@ -906,15 +909,15 @@ async function collectInstantGaming() {
   const visited = new Set();
   async function readListing(url, giftOnly) {
     const plat = igPlatformFromUrl(url);
-    for (let pg = 1; pg <= 10; pg++) {
+    for (let pg = 1; pg <= 8; pg++) {
       const u = pg === 1 ? url : `${url}${url.includes('?') ? '&' : '?'}page=${pg}`;
       try {
         const resp = await gotoFast(page, u);
         if (resp && resp.status() >= 400) { console.log(`   instant gaming ${u}: HTTP ${resp.status()}`); break; }
       } catch (e) { console.warn(`   instant gaming ${u}: ${e.message}`); break; }
       // descobre outras páginas de gift cards (marcas) a partir desta
-      const more = await page.$$eval('a[href*="/gift-cards/"]', as => as.map(a => a.href.split('#')[0].split('?')[0])).catch(() => []);
-      for (const h of more) if (/instant-gaming\.com\/pt\/.+\/gift-cards\//.test(h) && !queue.includes(h)) queue.push(h);
+      const more = await page.$$eval('a[href*="/gift-cards/"], a[href*="/assinaturas/"]', as => as.map(a => a.href.split('#')[0].split('?')[0])).catch(() => []);
+      for (const h of more) if (/instant-gaming\.com\/pt\/.+\/(gift-cards|assinaturas)\//.test(h) && !queue.includes(h)) queue.push(h);
       await page.mouse.wheel(0, 6000); await sleep(1200);
       const cards = await scrapeCards(page, IG);
       let r = await cardsToRows(cards, { source: 'instant_gaming', store: 'instant_gaming' });
@@ -926,7 +929,7 @@ async function collectInstantGaming() {
       if (!fresh.length) break;
     }
   }
-  for (let i = 0; i < queue.length && i < 40; i++) {
+  for (let i = 0; i < queue.length && i < 30; i++) {
     const u = queue[i];
     if (visited.has(u)) continue; visited.add(u);
     await readListing(u, true);
@@ -948,6 +951,15 @@ async function collectInstantGaming() {
 // ---------------------------------------------------------------------
 const LOADED_BASE = 'https://www.loaded.com/pt_pt/';
 const LOADED_CATS = ['deals', 'gift-cards'];
+// Páginas de assinaturas e gift cards (você indicou /xbox-live/memberships); outras são descobertas a partir delas
+const LOADED_PAGES = [
+  'https://www.loaded.com/xbox-live/memberships',
+  'https://www.loaded.com/xbox-live/gift-cards-points',
+  'https://www.loaded.com/playstation/memberships',
+  'https://www.loaded.com/nintendo/memberships',
+  'https://www.loaded.com/gift-cards',
+];
+const LOADED_PRODUCT = /^https:\/\/www\.loaded\.com\/(?:pt_pt\/)?[a-z0-9][a-z0-9-]{8,}$/;
 
 function platformFromTitle(t) {
   const s = String(t).toLowerCase();
@@ -1020,7 +1032,7 @@ async function collectLoaded() {
           ? (it.canonical_url.startsWith('http') ? it.canonical_url : LOADED_BASE + it.canonical_url.replace(/^\//, ''))
           : `${LOADED_BASE}${it.url_key}${it.url_suffix || ''}`;
         rows.push(baseRow('loaded', {
-          id: `loaded:${it.sku || it.url_key}`,
+          id: `loaded:${slugify(it.url_key || it.sku)}`,
           title: it.name,
           store: 'loaded',
           platform: platformFromTitle(it.name),
@@ -1036,15 +1048,41 @@ async function collectLoaded() {
     }
   }
 
-  // 2) Plano B: páginas de categoria (?p=2, ?p=3...)
-  if (rows.length < 20) {
+  const apiRows = rows.length;
+  // 2) Assinaturas e gift cards: sempre lidos direto das páginas da loja (?p=2, ?p=3...)
+  const queue = [...LOADED_PAGES];
+  const seenIds = new Set(rows.map(r => r.id));
+  for (let i = 0; i < queue.length && i < 20; i++) {
+    const base = queue[i];
+    const plat = /xbox/.test(base) ? 'xbox' : /playstation|psn/.test(base) ? 'ps' : /nintendo/.test(base) ? 'switch' : null;
+    for (let pg = 1; pg <= 15; pg++) {
+      const resp = await gotoFast(page, pg === 1 ? base : `${base}?p=${pg}`).catch(() => null);
+      if (resp && resp.status() >= 400) { console.log(`   loaded ${base}: HTTP ${resp.status()}`); break; }
+      if (pg === 1) {
+        await acceptCookies(page);
+        const more = await page.$$eval('a[href*="memberships"], a[href*="gift-cards"]', as => as.map(a => a.href.split('?')[0].split('#')[0])).catch(() => []);
+        for (const h of more) if (/loaded\.com\/(pt_pt\/)?[a-z-]+\/(memberships|gift-cards[a-z-]*)$/.test(h) && !queue.includes(h)) queue.push(h);
+      }
+      const cards = await scrapeCards(page, LOADED_PRODUCT);
+      const r = (await cardsToRows(cards, { source: 'loaded', store: 'loaded' }))
+        .map(x => ({ ...x, category: 'gift_card', platform: plat || platformFromTitle(x.title) }))
+        .filter(x => !seenIds.has(x.id));
+      r.forEach(x => seenIds.add(x.id));
+      rows.push(...r);
+      console.log(`   loaded ${base.replace('https://www.loaded.com/', '')} p${pg}: ${cards.length} cards, ${r.length} novos`);
+      if (!r.length) break;
+    }
+  }
+
+  // 3) Plano B das promoções: páginas de categoria (?p=2, ?p=3...), só se a API não trouxe as promoções
+  if (apiRows < 20) {
     console.log('   loaded: usando as páginas de categoria');
     const sel = 'a.product-item-link, .product-item a, .product-item-info a, [class*="product-item"] a, [class*="product-card"] a';
     for (const cat of LOADED_CATS) {
       const seen = new Set(rows.map(r => r.id));
       for (let pg = 1; pg <= 60; pg++) {
         await gotoFast(page, `${LOADED_BASE}${cat}?p=${pg}&product_list_limit=48`).catch(() => {});
-        const cards = await scrapeCards(page, /loaded\.com\/pt_pt\/[^/?#]+$/, sel);
+        const cards = await scrapeCards(page, LOADED_PRODUCT);
         let r = await cardsToRows(cards, { source: 'loaded', store: 'loaded' });
         r = r.map(x => {
           const gift = cat === 'gift-cards' || x.category === 'gift_card';
@@ -1161,9 +1199,9 @@ const SOURCES = [
   { name: 'xbox', label: 'Xbox', fn: collectXbox, timeout: 18 * 60e3 },
   { name: 'nintendo', label: 'Nintendo', fn: collectNintendo, timeout: 18 * 60e3 },
   { name: 'playstation', label: 'PlayStation', fn: collectPlayStation, timeout: 12 * 60e3 },
-  { name: 'nuuvem_gift', label: 'Gift cards Nuuvem', fn: collectNuuvemGiftCards, timeout: 6 * 60e3 },
-  { name: 'instant_gaming', label: 'Instant Gaming', fn: collectInstantGaming, timeout: 6 * 60e3 },
-  { name: 'loaded', label: 'Loaded', fn: collectLoaded, timeout: 20 * 60e3 },
+  { name: 'nuuvem_gift', label: 'Gift cards Nuuvem', fn: collectNuuvemGiftCards, timeout: 12 * 60e3 },
+  { name: 'instant_gaming', label: 'Instant Gaming', fn: collectInstantGaming, timeout: 22 * 60e3 },
+  { name: 'loaded', label: 'Loaded', fn: collectLoaded, timeout: 22 * 60e3 },
   { name: 'meta', label: 'Metascore e mais procurados', fn: collectMeta, timeout: 20 * 60e3, custom: true },
 ];
 

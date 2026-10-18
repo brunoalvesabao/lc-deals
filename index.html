@@ -90,6 +90,17 @@
   .pchip .caret { font-size: 16px; margin-left: -2px; }
   .badge-n { background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 7px; }
 
+  .ddbtn { gap: 8px; font-size: 14px; flex: none; }
+  .ddbtn .k { color: var(--muted); font-size: 12px; font-weight: 600; }
+  .ddbtn .v { font-weight: 700; }
+  .ddbtn .caret { font-size: 16px; color: var(--muted); }
+  .ddbtn.set { border-color: var(--accent); background: var(--accent-soft); }
+  .mitem .ico { width: 22px; text-align: center; font-size: 19px; color: var(--accent2); flex: none; }
+  .mitem .chk { font-size: 18px; color: var(--accent); margin-left: 6px; visibility: hidden; }
+  .mitem.on .chk { visibility: visible; }
+  .mitem .sub { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
+  .flag { width: 22px; height: 15px; border-radius: 3px; flex: none; display: block; box-shadow: 0 0 0 1px rgba(0,0,0,.12); }
+  @media (max-width: 720px) { .ddbtn .k { display: none; } }
   .giftbar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 0 0 12px; }
   .giftbar .grp { display: flex; gap: 6px; align-items: center; overflow-x: auto; scrollbar-width: none; }
   .giftbar .grp::-webkit-scrollbar { display: none; }
@@ -240,9 +251,10 @@
       </div>
       <div class="filterbar">
         <div class="plats" id="platforms"></div>
+        <button class="btn ddbtn" id="gtypeBtn" hidden aria-haspopup="menu"></button>
+        <button class="btn ddbtn" id="regionBtn" hidden aria-haspopup="menu"></button>
         <button class="btn" id="filtersBtn"><i class="mdi mdi-tune-variant"></i><span class="hide-sm">Filtros</span><span class="badge-n" id="filtersN" hidden></span></button>
       </div>
-      <div class="giftbar" id="giftbar" hidden></div>
     </div>
   </div>
 </header>
@@ -300,6 +312,8 @@
 </main>
 
 <div class="pop" id="pcMenu" role="menu"></div>
+<div class="pop" id="gtypeMenu" role="menu"></div>
+<div class="pop" id="regionMenu" role="menu"></div>
 <div class="pop fpanel" id="filtersPanel"></div>
 <div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
@@ -341,14 +355,28 @@ const PAGE = 60;
 
 const state = { tab: 'deals', platform: 'all', store: 'all', q: '', sort: 'hot', maxPrice: '', minOff: 0, minMc: 0, dlc: false, hideOwned: true, shown: PAGE,
   giftType: 'all', region: (() => { try { return localStorage.getItem('lc_region') || 'br'; } catch { return 'br'; } })() };
-const GIFT_TYPES = [['all', 'Todos'], ['wallet', 'Saldo / cartão presente'], ['sub', 'Assinaturas'], ['currency', 'Moedas de jogos'], ['other', 'Outros']];
-const REGIONS = [['br', '🇧🇷 Brasil'], ['us', '🇺🇸 EUA'], ['eu', '🇪🇺 Europa'], ['all', 'Todas as regiões']];
+const GIFT_TYPES = [
+  ['all', 'Todos os tipos', 'mdi-gift-outline', ''],
+  ['wallet', 'Saldo / cartão presente', 'mdi-wallet-giftcard', 'Microsoft Store, PSN, eShop, Steam…'],
+  ['sub', 'Assinaturas', 'mdi-calendar-sync', 'Game Pass, PS Plus, Switch Online…'],
+  ['currency', 'Moedas de jogos', 'mdi-hand-coin', 'FC Points, V-Bucks, COD Points…'],
+  ['other', 'Outros', 'mdi-dots-horizontal-circle-outline', ''],
+];
+// Bandeiras simples (o Windows não mostra emoji de bandeira)
+const FLAGS = {
+  br: '<svg class="flag" viewBox="0 0 22 15"><rect width="22" height="15" fill="#009b3a"/><path d="M11 2 20 7.5 11 13 2 7.5Z" fill="#fedf00"/><circle cx="11" cy="7.5" r="3.2" fill="#002776"/></svg>',
+  us: '<svg class="flag" viewBox="0 0 22 15"><rect width="22" height="15" fill="#fff"/><g fill="#b22234"><rect y="0" width="22" height="1.6"/><rect y="3.2" width="22" height="1.6"/><rect y="6.4" width="22" height="1.6"/><rect y="9.6" width="22" height="1.6"/><rect y="12.8" width="22" height="1.6"/></g><rect width="9.5" height="8" fill="#3c3b6e"/></svg>',
+  eu: '<svg class="flag" viewBox="0 0 22 15"><rect width="22" height="15" fill="#003399"/><g fill="#ffcc00">' + Array.from({ length: 12 }, (_, i) => `<circle cx="${(11 + 4.6 * Math.cos(i * Math.PI / 6)).toFixed(2)}" cy="${(7.5 + 4.6 * Math.sin(i * Math.PI / 6)).toFixed(2)}" r=".75"/>`).join('') + '</g></svg>',
+  all: '<i class="mdi mdi-earth ico" style="width:22px"></i>',
+};
+const REGIONS = [['br', 'Brasil'], ['us', 'Estados Unidos'], ['eu', 'Europa'], ['all', 'Todas as regiões']];
 let rows = [];
 let meta = new Map();   // game_key -> { m: metascore, w: desejos }
 let dlcLoaded = false;
 let groups = [];
 let runs = [];
 let runsBySource = {};
+let hiddenByRegion = 0;
 
 // ---------- armazenamento local ----------
 function load(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
@@ -401,7 +429,7 @@ function giftType(r) {
   if (r._gt) return r._gt;
   const t = norm(r.title);
   let k = 'other';
-  if (/game ?pass|ps ?plus|playstation plus|switch online|ea play|ubisoft\+|assinatura|membership|\bmeses\b|\bmonths?\b|\bdias\b|\bdays\b/.test(t)) k = 'sub';
+  if (/game ?pass|ps ?plus|playstation plus|switch online|ea play|ubisoft\+|assinatura|membership|\bmeses\b|\bmes\b|\bmonths?\b|\bdias\b|\bdays\b/.test(t)) k = 'sub';
   else if (/points|pontos|moedas|coins|v-?bucks|\bvc\b|platina|platinum|gold bars|minecoins|\bcp\b|cash card|shark|credits|creditos|robux|riot points|\brp\b|gemas|gems|diamantes|\bfc points/.test(t)) k = 'currency';
   else if (/gift ?card|cartao|vale-?presente|wallet|saldo|top-?up|eshop|psn|playstation store|microsoft store|steam|xbox live|nintendo|presente/.test(t)) k = 'wallet';
   return (r._gt = k);
@@ -568,6 +596,13 @@ function apply(resetScroll = true) {
   groups.sort(state.tab === 'gift'
     ? (a, b) => (giftRegion(a.best) === 'br' ? 0 : 1) - (giftRegion(b.best) === 'br' ? 0 : 1) || by(a, b)
     : by);
+  hiddenByRegion = 0;
+  if (state.tab === 'gift' && state.region !== 'all') {
+    const shown = new Set(groups.map(g => g.key));
+    const other = new Set();
+    for (const r of rows) if (rowPasses(r, 'region') && !shown.has(groupKey(r))) other.add(groupKey(r));
+    hiddenByRegion = other.size;
+  }
   if (resetScroll) state.shown = PAGE;
   render();
 }
@@ -632,7 +667,8 @@ function render() {
   const chips = activeFilterChips().map(([k, l]) => `<span class="active-f">${esc(l)}<button data-clear="${k}" aria-label="Remover filtro">×</button></span>`).join('');
   let note = '';
   if ((state.sort === 'metascore' || state.minMc) && meta.size === 0) note = ' · as notas ainda não foram coletadas';
-  $('summary').innerHTML = `<span>${num(total)} ${total === 1 ? 'item' : 'itens'}${note}</span>${chips}`;
+  const more = hiddenByRegion ? `<button class="link" data-region="all">+${num(hiddenByRegion)} de outras regiões (EUA, Europa…)</button>` : '';
+  $('summary').innerHTML = `<span>${num(total)} ${total === 1 ? 'item' : 'itens'}${note}</span>${chips}${more}`;
   if (!total) {
     let msg = 'Nada encontrado com esses filtros.';
     if (state.tab === 'wishlist') msg = 'Sua wishlist está vazia. Toque no coração de um jogo.';
@@ -677,16 +713,34 @@ function buildPlatforms() {
 }
 
 function buildGiftbar() {
-  const bar = $('giftbar');
-  bar.hidden = state.tab !== 'gift';
-  if (bar.hidden) return;
+  const on = state.tab === 'gift';
+  $('gtypeBtn').hidden = !on; $('regionBtn').hidden = !on;
+  if (!on) return;
+  const t = GIFT_TYPES.find(([k]) => k === state.giftType) || GIFT_TYPES[0];
+  const r = REGIONS.find(([k]) => k === state.region) || REGIONS[0];
+  $('gtypeBtn').className = `btn ddbtn ${state.giftType !== 'all' ? 'set' : ''}`;
+  $('gtypeBtn').innerHTML = `<i class="mdi ${t[2]}"></i><span class="k">Tipo</span><span class="v">${({ all: 'Todos', wallet: 'Saldo', sub: 'Assinaturas', currency: 'Moedas', other: 'Outros' })[state.giftType] || 'Todos'}</span><i class="mdi mdi-chevron-down caret"></i>`;
+  $('regionBtn').className = `btn ddbtn ${state.region !== 'all' ? 'set' : ''}`;
+  $('regionBtn').innerHTML = `${FLAGS[r[0]]}<span class="k">Região</span><span class="v">${esc(r[1] === 'Todas as regiões' ? 'Todas' : r[1])}</span><i class="mdi mdi-chevron-down caret"></i>`;
+}
+function openGtypeMenu(anchor) {
   const tc = countsBy(giftType, 'gtype');
+  const total = Object.values(tc).reduce((a, b) => a + b, 0);
+  $('gtypeMenu').innerHTML = GIFT_TYPES.map(([k, l, ic, sub]) => {
+    const n = k === 'all' ? total : (tc[k] || 0);
+    return `<button class="mitem ${state.giftType === k ? 'on' : ''} ${n ? '' : 'off'}" data-gtype="${k}"><i class="mdi ${ic} ico"></i><span>${esc(l)}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span><small>${num(n)}</small><i class="mdi mdi-check chk"></i></button>`;
+  }).join('');
+  placePop($('gtypeMenu'), anchor);
+}
+function openRegionMenu(anchor) {
   const rc = countsBy(giftRegion, 'region');
-  const tAll = Object.values(tc).reduce((a, b) => a + b, 0);
-  const pill = (attr, k, label, n, on) => `<button class="pill ${on ? 'on' : ''} ${n ? '' : 'off'}" ${attr}="${k}">${label}<small>${num(n)}</small></button>`;
-  bar.innerHTML = `
-    <div class="grp"><span class="lbl2">Tipo</span>${GIFT_TYPES.filter(([k]) => k === 'all' || tc[k]).map(([k, l]) => pill('data-gtype', k, l, k === 'all' ? tAll : tc[k], state.giftType === k)).join('')}</div>
-    <div class="grp"><span class="lbl2">Região</span>${REGIONS.map(([k, l]) => pill('data-region', k, l, k === 'all' ? Object.values(rc).reduce((a, b) => a + b, 0) : (rc[k] || 0), state.region === k)).join('')}</div>`;
+  const total = Object.values(rc).reduce((a, b) => a + b, 0);
+  $('regionMenu').innerHTML = REGIONS.map(([k, l]) => {
+    const n = k === 'all' ? total : (rc[k] || 0);
+    const sub = k === 'br' ? 'Inclui moedas e assinaturas sem região' : '';
+    return `${k === 'all' ? '<div class="msep"></div>' : ''}<button class="mitem ${state.region === k ? 'on' : ''} ${n ? '' : 'off'}" data-region="${k}">${FLAGS[k]}<span>${esc(l)}${sub ? `<span class="sub">${sub}</span>` : ''}</span><small>${num(n)}</small><i class="mdi mdi-check chk"></i></button>`;
+  }).join('');
+  placePop($('regionMenu'), anchor);
 }
 
 // ---------- menus suspensos ----------
@@ -921,10 +975,12 @@ document.addEventListener('click', e => {
     else state[k] = Number(f.dataset.v);
     renderFilters(); return apply();
   }
+  if (e.target.closest('#gtypeBtn')) { const open = $('gtypeMenu').classList.contains('open'); closePops(); if (!open) openGtypeMenu($('gtypeBtn')); return; }
+  if (e.target.closest('#regionBtn')) { const open = $('regionMenu').classList.contains('open'); closePops(); if (!open) openRegionMenu($('regionBtn')); return; }
   const gt = e.target.closest('[data-gtype]');
-  if (gt) { state.giftType = gt.dataset.gtype; return apply(); }
+  if (gt) { state.giftType = gt.dataset.gtype; closePops(); return apply(); }
   const rg = e.target.closest('[data-region]');
-  if (rg) { state.region = rg.dataset.region; try { localStorage.setItem('lc_region', state.region); } catch { /* ignora */ } return apply(); }
+  if (rg) { state.region = rg.dataset.region; try { localStorage.setItem('lc_region', state.region); } catch { /* ignora */ } closePops(); return apply(); }
   const clr = e.target.closest('[data-clear]');
   if (clr) {
     const k = clr.dataset.clear;
