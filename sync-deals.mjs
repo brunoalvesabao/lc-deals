@@ -762,34 +762,41 @@ async function collectPlayStation() {
 // ---------------------------------------------------------------------
 // 6) Gift cards — Nuuvem e Instant Gaming (leitura genérica dos cards da página)
 // ---------------------------------------------------------------------
-async function scrapeCards(page, linkPattern) {
-  return page.evaluate((pattern) => {
+// Lê os cards de produto de uma página de listagem.
+// O "card" de cada link é o MAIOR bloco que ainda contém só aquele produto (sem outros links de produto).
+// Antes, o robô subia até achar um preço e acabava pegando a lista inteira (mesma imagem/preço em todos).
+async function scrapeCards(page, linkPattern, anchorSelector = 'a[href]') {
+  return page.evaluate(({ pattern, anchorSelector }) => {
     const re = new RegExp(pattern);
+    const keyOf = h => h.split('?')[0].split('#')[0].replace(/\/$/, '');
+    const MONEY = /(R\$|€|US\$|\$|£)\s*\d[\d.,]*/g;
+    const links = [...document.querySelectorAll(anchorSelector)].filter(a => a.href && re.test(a.href));
     const out = [];
     const seen = new Set();
-    for (const a of document.querySelectorAll('a[href]')) {
-      const href = a.href;
-      if (!re.test(href) || seen.has(href)) continue;
+    for (const a of links) {
+      const key = keyOf(a.href);
+      if (seen.has(key)) continue;
       let card = a;
-      for (let i = 0; i < 6 && card.parentElement; i++) {
-        if (/(R\$|€|\$)\s*\d/.test(card.innerText || '')) break;
+      while (card.parentElement && card.parentElement !== document.body) {
+        const others = [...card.parentElement.querySelectorAll(anchorSelector)]
+          .filter(x => x.href && re.test(x.href) && keyOf(x.href) !== key);
+        if (others.length) break;
         card = card.parentElement;
       }
-      const text = card.innerText || '';
-      const prices = text.match(/(R\$|€|US\$|\$)\s*\d[\d.,]*/g) || [];
-      if (!prices.length) continue;
-      seen.add(href);
+      const titleEl = card.querySelector('[class*="title" i], [class*="name" i], h2, h3, h4');
       const img = card.querySelector('img');
-      const title = (card.querySelector('[class*="title" i], h2, h3, h4')?.innerText || a.title || img?.alt || a.innerText || '').trim().split('\n')[0];
+      const title = (titleEl?.innerText || a.getAttribute('title') || img?.alt || a.innerText || '').trim().split('\n')[0];
+      let text = card.innerText || '';
+      if (title) text = text.split(title).join(' ');      // não confundir "R$ 100" do nome do cartão com o preço
+      const prices = text.match(MONEY) || [];
+      if (!prices.length) continue;
+      seen.add(key);
       const disc = (text.match(/-\s?(\d{1,2})\s?%/) || [])[1];
-      out.push({
-        href, title, prices,
-        discount: disc ? Number(disc) : 0,
-        img: img ? (img.currentSrc || img.src || img.getAttribute('data-src')) : null,
-      });
+      const src = img ? (img.currentSrc || img.getAttribute('data-src') || img.src || '') : '';
+      out.push({ href: a.href, title, prices, discount: disc ? Number(disc) : 0, img: src && !src.startsWith('data:') ? src : null });
     }
     return out;
-  }, linkPattern.source);
+  }, { pattern: linkPattern.source, anchorSelector });
 }
 
 async function cardsToRows(cards, { source, store }) {
@@ -846,27 +853,160 @@ async function collectNuuvemGiftCards() {
 async function collectInstantGaming() {
   const page = await newPage();
   const rows = [];
-  const targets = [
-    { url: 'https://www.instant-gaming.com/pt/pesquisar/?q=gift%20card', giftOnly: true },
-    { url: 'https://www.instant-gaming.com/pt/pesquisar/?q=psn', giftOnly: true },
-    { url: 'https://www.instant-gaming.com/pt/pesquisar/?q=xbox%20live', giftOnly: true },
-    { url: 'https://www.instant-gaming.com/pt/pesquisar/?q=nintendo%20eshop', giftOnly: true },
-    { url: 'https://www.instant-gaming.com/pt/pesquisar/?sort_by=bestsellers_desc', giftOnly: false },
-    { url: 'https://www.instant-gaming.com/pt/pesquisar/?sort_by=bestsellers_desc&page=2', giftOnly: false },
-    { url: 'https://www.instant-gaming.com/pt/pesquisar/?sort_by=bestsellers_desc&page=3', giftOnly: false },
-  ];
-  for (const t of targets) {
-    try {
-      await page.goto(t.url, { waitUntil: 'networkidle', timeout: 45000 });
-      await sleep(1500);
-      const cards = await scrapeCards(page, /instant-gaming\.com\/pt\/\d+-/);
+  const IG = /instant-gaming\.com\/pt\/\d+-/;
+  // Página de gift cards que você indicou + as outras marcas que aparecerem nela
+  const start = 'https://www.instant-gaming.com/pt/xbox/gift-cards/brands/microsoft-store/';
+  const queue = [start];
+  const visited = new Set();
+  async function readListing(url, giftOnly) {
+    for (let pg = 1; pg <= 10; pg++) {
+      const u = pg === 1 ? url : `${url}${url.includes('?') ? '&' : '?'}page=${pg}`;
+      try {
+        await page.goto(u, { waitUntil: 'networkidle', timeout: 45000 });
+      } catch (e) { console.warn(`   instant gaming ${u}: ${e.message}`); break; }
+      if (pg === 1) await acceptCookies(page);
+      await page.mouse.wheel(0, 6000); await sleep(1200);
+      const cards = await scrapeCards(page, IG);
       let r = await cardsToRows(cards, { source: 'instant_gaming', store: 'instant_gaming' });
-      if (t.giftOnly) r = r.filter(x => x.category === 'gift_card');
-      console.log(`   instant gaming ${t.url.split('?')[1]}: ${cards.length} cards, ${r.length} usados`);
-      rows.push(...r);
-    } catch (e) { console.warn('   instant gaming:', e.message); }
+      if (giftOnly) r = r.map(x => ({ ...x, category: 'gift_card', platform: 'giftcard' }));
+      const before = rows.length;
+      const ids = new Set(rows.map(x => x.id));
+      rows.push(...r.filter(x => !ids.has(x.id)));
+      console.log(`   instant gaming ${u.replace('https://www.instant-gaming.com/pt/', '')}: ${cards.length} cards, ${rows.length - before} novos`);
+      if (rows.length === before) break;
+    }
   }
+  try {
+    await page.goto(start, { waitUntil: 'networkidle', timeout: 45000 });
+    await acceptCookies(page);
+    const more = await page.$$eval('a[href*="/gift-cards/"]', as => as.map(a => a.href.split('#')[0])).catch(() => []);
+    for (const h of more) if (/instant-gaming\.com\/pt\/.+\/gift-cards\//.test(h) && !queue.includes(h)) queue.push(h);
+  } catch (e) { console.warn('   instant gaming start:', e.message); }
+  console.log(`   instant gaming: ${queue.length} páginas de gift cards encontradas`);
+  for (const u of queue.slice(0, 25)) { if (visited.has(u)) continue; visited.add(u); await readListing(u, true); }
+  // Jogos mais vendidos (promoções)
+  await readListing('https://www.instant-gaming.com/pt/pesquisar/?sort_by=bestsellers_desc', false);
   if (rows.length === 0) await dump(page, 'instant_gaming');
+  await page.context().close();
+  return rows;
+}
+
+// ---------------------------------------------------------------------
+// 9) Loaded (antiga CDKeys) — loja em Magento.
+//    1º tenta a API GraphQL da própria loja (rápida e completa); se não der, lê as páginas de categoria.
+// ---------------------------------------------------------------------
+const LOADED_BASE = 'https://www.loaded.com/pt_pt/';
+const LOADED_CATS = ['deals', 'gift-cards'];
+
+function platformFromTitle(t) {
+  const s = String(t).toLowerCase();
+  if (/xbox|game pass/.test(s)) return 'xbox';
+  if (/\bps[345]\b|playstation|psn/.test(s)) return 'ps';
+  if (/nintendo|switch|eshop/.test(s)) return 'switch';
+  return 'pc';
+}
+
+async function loadedGraphql(page) {
+  return page.evaluate(async ({ cats }) => {
+    const store = location.pathname.split('/')[1] || 'default';
+    const out = { store, items: {}, errors: [] };
+    async function q(query, variables, currency) {
+      const headers = { 'Content-Type': 'application/json', Store: store };
+      if (currency) headers['Content-Currency'] = currency;
+      const r = await fetch('/graphql', { method: 'POST', headers, body: JSON.stringify({ query, variables }) });
+      return r.json();
+    }
+    const PRODUCTS = `query($u:String,$p:Int){products(filter:{category_uid:{eq:$u}},pageSize:100,currentPage:$p){
+      total_count page_info{total_pages}
+      items{ name sku url_key url_suffix canonical_url small_image{url}
+        price_range{minimum_price{regular_price{value currency} final_price{value currency} discount{percent_off}}} } }}`;
+    let currency = 'BRL';
+    for (const key of cats) {
+      try {
+        const c = await q('query($k:String){categoryList(filters:{url_key:{eq:$k}}){uid name}}', { k: key });
+        const uid = c?.data?.categoryList?.[0]?.uid;
+        if (!uid) { out.errors.push(`${key}: categoria não encontrada ${JSON.stringify(c?.errors || '').slice(0, 160)}`); continue; }
+        const items = [];
+        for (let p = 1; p <= 80; p++) {
+          let r = await q(PRODUCTS, { u: uid, p }, currency);
+          if (!r?.data?.products && currency) { currency = null; r = await q(PRODUCTS, { u: uid, p }); }
+          const d = r?.data?.products;
+          if (!d) { out.errors.push(`${key} p${p}: ${JSON.stringify(r?.errors || r).slice(0, 160)}`); break; }
+          items.push(...d.items);
+          if (p >= (d.page_info?.total_pages || 1)) break;
+        }
+        out.items[key] = items;
+      } catch (e) { out.errors.push(`${key}: ${e.message}`); }
+    }
+    return out;
+  }, { cats: LOADED_CATS });
+}
+
+async function collectLoaded() {
+  const page = await newPage();
+  const rows = [];
+  await page.goto(LOADED_BASE + 'deals', { waitUntil: 'networkidle', timeout: 60000 }).catch(e => console.warn('   loaded goto:', e.message));
+  await acceptCookies(page);
+
+  // 1) API da loja
+  let api = null;
+  try { api = await loadedGraphql(page); } catch (e) { console.warn('   loaded graphql:', e.message); }
+  if (api) {
+    console.log(`   loaded: loja "${api.store}", ${Object.entries(api.items).map(([k, v]) => `${k}=${v.length}`).join(', ') || 'nada'}`);
+    api.errors.forEach(e => console.warn('   loaded graphql:', e));
+    for (const [cat, items] of Object.entries(api.items)) {
+      for (const it of items) {
+        const mp = it.price_range?.minimum_price;
+        if (!mp) continue;
+        const isGiftCat = cat === 'gift-cards';
+        const sale = await toBRL(mp.final_price?.value, mp.final_price?.currency);
+        const reg = await toBRL(mp.regular_price?.value, mp.regular_price?.currency);
+        if (sale.value == null) continue;
+        if (!isGiftCat && !(sale.value < reg.value)) continue;
+        const { isGift } = classifyGiftCard(it.name);
+        const gift = isGiftCat || isGift;
+        const url = it.canonical_url
+          ? (it.canonical_url.startsWith('http') ? it.canonical_url : LOADED_BASE + it.canonical_url.replace(/^\//, ''))
+          : `${LOADED_BASE}${it.url_key}${it.url_suffix || ''}`;
+        rows.push(baseRow('loaded', {
+          id: `loaded:${it.sku || it.url_key}`,
+          title: it.name,
+          store: 'loaded',
+          platform: gift ? 'giftcard' : platformFromTitle(it.name),
+          category: gift ? 'gift_card' : 'game_deal',
+          original_price: reg.value,
+          discount_price: sale.value,
+          discount_pct: mp.discount?.percent_off != null ? Math.round(mp.discount.percent_off) : undefined,
+          currency: sale.currency,
+          image_url: it.small_image?.url || null,
+          deal_url: url,
+        }));
+      }
+    }
+  }
+
+  // 2) Plano B: páginas de categoria (?p=2, ?p=3...)
+  if (rows.length < 20) {
+    console.log('   loaded: usando as páginas de categoria');
+    const sel = 'a.product-item-link, .product-item a, .product-item-info a, [class*="product-item"] a, [class*="product-card"] a';
+    for (const cat of LOADED_CATS) {
+      const seen = new Set(rows.map(r => r.id));
+      for (let pg = 1; pg <= 60; pg++) {
+        await page.goto(`${LOADED_BASE}${cat}?p=${pg}&product_list_limit=48`, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {});
+        const cards = await scrapeCards(page, /loaded\.com\/pt_pt\/[^/?#]+$/, sel);
+        let r = await cardsToRows(cards, { source: 'loaded', store: 'loaded' });
+        r = r.map(x => {
+          const gift = cat === 'gift-cards' || x.category === 'gift_card';
+          return { ...x, category: gift ? 'gift_card' : 'game_deal', platform: gift ? 'giftcard' : platformFromTitle(x.title) };
+        }).filter(x => !seen.has(x.id));
+        r.forEach(x => seen.add(x.id));
+        rows.push(...r);
+        console.log(`   loaded ${cat} p${pg}: ${cards.length} cards, ${r.length} novos`);
+        if (!r.length) break;
+      }
+    }
+  }
+  if (rows.length < 20) await dump(page, 'loaded');
   await page.context().close();
   return rows;
 }
@@ -965,6 +1105,7 @@ const SOURCES = [
   { name: 'playstation', label: 'PlayStation', fn: collectPlayStation, timeout: 12 * 60e3 },
   { name: 'nuuvem_gift', label: 'Gift cards Nuuvem', fn: collectNuuvemGiftCards, timeout: 6 * 60e3 },
   { name: 'instant_gaming', label: 'Instant Gaming', fn: collectInstantGaming, timeout: 6 * 60e3 },
+  { name: 'loaded', label: 'Loaded', fn: collectLoaded, timeout: 20 * 60e3 },
   { name: 'meta', label: 'Metascore e mais procurados', fn: collectMeta, timeout: 20 * 60e3, custom: true },
 ];
 

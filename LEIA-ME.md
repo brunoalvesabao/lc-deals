@@ -64,3 +64,9 @@ O GitHub não garante o minuto exato: em horários cheios, a execução agendada
 1. **config.js**: cole a chave anon do Supabase neste arquivo (não mais no index.html). As próximas atualizações não vão trazer o config.js, então você não precisa colar de novo.
 2. **Supabase → SQL Editor**: rode o arquivo `supabase/migration-002.sql` (cria a tabela de notas/Metascore). Não apaga nada.
 3. A nova fonte `meta` busca Metascore e "mais procurados" no IsThereAnyDeal: ~500 jogos por rodada, começando pelos mais desejados. Com 4 rodadas por dia, o catálogo de PC fica todo coberto em poucos dias. Jogos de console usam a nota do jogo de mesmo nome; exclusivos sem versão de PC ficam sem nota.
+
+## Versão 2.8
+
+- **Instant Gaming corrigida**: cada card agora lê só o próprio produto (antes pegava a lista inteira e repetia imagem/preço). Os gift cards partem da página `/pt/xbox/gift-cards/brands/microsoft-store/` e seguem os links das outras marcas encontrados nela.
+- **Loaded (antiga CDKeys)**: nova fonte `loaded`. Primeiro tenta a API GraphQL da loja (Magento); se não der, lê as páginas `deals` e `gift-cards`. Preços em dólar são convertidos para R$ pela cotação do dia (marcados com ≈ no site).
+- Lembrete: a fonte `meta` só funciona depois de rodar `supabase/migration-002.sql`.

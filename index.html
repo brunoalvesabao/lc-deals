@@ -311,12 +311,13 @@ const STORES = {
   nuuvem:         { label: 'Nuuvem',         color: '#0e8fa8', logo: 'img/stores/nuuvem.png', named: true },
   instant_gaming: { label: 'Instant Gaming', color: '#ff5400', logo: 'img/stores/instant-gaming.png', named: true },
   humble:         { label: 'Humble Bundle',  color: '#cc2929', logo: 'img/stores/humble.svg', named: true, wordmark: true },
+  loaded:         { label: 'Loaded',         color: '#ff5a1f' },
   nintendo:       { label: 'Nintendo eShop', color: '#e60012' },
   xbox:           { label: 'Xbox',           color: '#107c10' },
   playstation:    { label: 'PS Store',       color: '#0070d1' },
   outras:         { label: 'Outras',         color: '#666' },
 };
-const PC_STORES = ['steam', 'epic', 'nuuvem', 'instant_gaming', 'humble', 'outras'];
+const PC_STORES = ['steam', 'epic', 'nuuvem', 'instant_gaming', 'loaded', 'humble', 'outras'];
 const PLATFORMS = {
   switch: { mask: 'img/platforms/switch-mask.png',      w: 99, h: 22, color: '#e60012', title: 'Nintendo Switch' },
   ps:     { mask: 'img/platforms/playstation-mask.svg', w: 94, h: 17, color: '#0070d1', title: 'PlayStation' },
@@ -325,7 +326,7 @@ const PLATFORMS = {
 };
 const PLATFORM_LABEL = { switch: 'Switch', ps: 'PlayStation', xbox: 'Xbox', pc: 'PC', giftcard: 'Gift card' };
 const PLATFORM_SOURCE = { switch: 'nintendo', xbox: 'xbox', ps: 'playstation' };
-const SOURCE_NAMES = { itad: 'PC (Steam, Epic, Nuuvem, Humble)', epic_free: 'Epic grátis', xbox: 'Xbox', nintendo: 'Nintendo', playstation: 'PlayStation', nuuvem_gift: 'Gift cards Nuuvem', instant_gaming: 'Instant Gaming', meta: 'Metascore e mais procurados' };
+const SOURCE_NAMES = { itad: 'PC (Steam, Epic, Nuuvem, Humble)', epic_free: 'Epic grátis', xbox: 'Xbox', nintendo: 'Nintendo', playstation: 'PlayStation', nuuvem_gift: 'Gift cards Nuuvem', instant_gaming: 'Instant Gaming', loaded: 'Loaded (antiga CDKeys)', meta: 'Metascore e mais procurados' };
 const PRICE_OPTS = [['', 'Qualquer'], ['10', 'Até R$ 10'], ['25', 'Até R$ 25'], ['50', 'Até R$ 50'], ['100', 'Até R$ 100'], ['200', 'Até R$ 200']];
 const OFF_OPTS = [[0, 'Qualquer'], [30, '30%+'], [50, '50%+'], [75, '75%+'], [90, '90%+']];
 const MC_OPTS = [[0, 'Qualquer'], [70, '70+'], [80, '80+'], [90, '90+']];
@@ -733,7 +734,7 @@ function showSettings(on) {
 window.addEventListener('popstate', () => showSettings(location.hash === '#config'));
 
 function renderSettings() {
-  const order = ['itad', 'epic_free', 'nintendo', 'playstation', 'xbox', 'nuuvem_gift', 'instant_gaming', 'meta'];
+  const order = ['itad', 'epic_free', 'nintendo', 'playstation', 'xbox', 'nuuvem_gift', 'instant_gaming', 'loaded', 'meta'];
   const list = [...runs].sort((a, b) => order.indexOf(a.source) - order.indexOf(b.source));
   $('storeStatus').innerHTML = list.length ? list.map(r => `
     <div class="srow">
