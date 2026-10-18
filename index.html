@@ -90,6 +90,12 @@
   .pchip .caret { font-size: 16px; margin-left: -2px; }
   .badge-n { background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 7px; }
 
+  .giftbar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 0 0 12px; }
+  .giftbar .grp { display: flex; gap: 6px; align-items: center; overflow-x: auto; scrollbar-width: none; }
+  .giftbar .grp::-webkit-scrollbar { display: none; }
+  .giftbar .lbl2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 700; margin-right: 2px; white-space: nowrap; }
+  .giftbar .pill small { opacity: .7; margin-left: 4px; }
+  .giftbar .pill.off { opacity: .45; }
   /* ---------- menus suspensos ---------- */
   .pop { position: fixed; z-index: 40; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 6px; min-width: 230px; display: none; max-height: 70vh; overflow: auto; }
   .pop.open { display: block; }
@@ -236,6 +242,7 @@
         <div class="plats" id="platforms"></div>
         <button class="btn" id="filtersBtn"><i class="mdi mdi-tune-variant"></i><span class="hide-sm">Filtros</span><span class="badge-n" id="filtersN" hidden></span></button>
       </div>
+      <div class="giftbar" id="giftbar" hidden></div>
     </div>
   </div>
 </header>
@@ -311,7 +318,7 @@ const STORES = {
   nuuvem:         { label: 'Nuuvem',         color: '#0e8fa8', logo: 'img/stores/nuuvem.png', named: true },
   instant_gaming: { label: 'Instant Gaming', color: '#ff5400', logo: 'img/stores/instant-gaming.png', named: true },
   humble:         { label: 'Humble Bundle',  color: '#cc2929', logo: 'img/stores/humble.svg', named: true, wordmark: true },
-  loaded:         { label: 'Loaded',         color: '#ff5a1f' },
+  loaded:         { label: 'Loaded',         color: '#2c2f66', logo: 'img/stores/loaded.png', named: true },
   nintendo:       { label: 'Nintendo eShop', color: '#e60012' },
   xbox:           { label: 'Xbox',           color: '#107c10' },
   playstation:    { label: 'PS Store',       color: '#0070d1' },
@@ -332,7 +339,10 @@ const OFF_OPTS = [[0, 'Qualquer'], [30, '30%+'], [50, '50%+'], [75, '75%+'], [90
 const MC_OPTS = [[0, 'Qualquer'], [70, '70+'], [80, '80+'], [90, '90+']];
 const PAGE = 60;
 
-const state = { tab: 'deals', platform: 'all', store: 'all', q: '', sort: 'hot', maxPrice: '', minOff: 0, minMc: 0, dlc: false, hideOwned: true, shown: PAGE };
+const state = { tab: 'deals', platform: 'all', store: 'all', q: '', sort: 'hot', maxPrice: '', minOff: 0, minMc: 0, dlc: false, hideOwned: true, shown: PAGE,
+  giftType: 'all', region: (() => { try { return localStorage.getItem('lc_region') || 'br'; } catch { return 'br'; } })() };
+const GIFT_TYPES = [['all', 'Todos'], ['wallet', 'Saldo / cartão presente'], ['sub', 'Assinaturas'], ['currency', 'Moedas de jogos'], ['other', 'Outros']];
+const REGIONS = [['br', '🇧🇷 Brasil'], ['us', '🇺🇸 EUA'], ['eu', '🇪🇺 Europa'], ['all', 'Todas as regiões']];
 let rows = [];
 let meta = new Map();   // game_key -> { m: metascore, w: desejos }
 let dlcLoaded = false;
@@ -376,12 +386,35 @@ function storeLogo(s) {
 // Gift cards: a "plataforma" vem do nome do cartão
 function platformOf(r) {
   if (r.category !== 'gift_card') return r.platform;
+  if (r.platform && r.platform !== 'giftcard') return r.platform;   // veio da página da loja (ex.: gift cards de Xbox)
   const t = norm(r.title);
   if (/nintendo|eshop|switch/.test(t)) return 'switch';
   if (/psn|playstation|ps plus|ps5|ps4/.test(t)) return 'ps';
   if (/xbox|game ?pass/.test(t)) return 'xbox';
   if (/steam|epic|pc|windows/.test(t)) return 'pc';
   return 'other';
+}
+
+// Tipo e região do gift card, lidos do nome (calculados uma vez por item)
+function giftType(r) {
+  if (r._gt) return r._gt;
+  const t = norm(r.title);
+  let k = 'other';
+  if (/game ?pass|ps ?plus|playstation plus|switch online|ea play|ubisoft\+|assinatura|membership|\bmeses\b|\bmonths?\b|\bdias\b|\bdays\b/.test(t)) k = 'sub';
+  else if (/points|pontos|moedas|coins|v-?bucks|\bvc\b|platina|platinum|gold bars|minecoins|\bcp\b|cash card|shark|credits|creditos|robux|riot points|\brp\b|gemas|gems|diamantes|\bfc points/.test(t)) k = 'currency';
+  else if (/gift ?card|cartao|vale-?presente|wallet|saldo|top-?up|eshop|psn|playstation store|microsoft store|steam|xbox live|nintendo|presente/.test(t)) k = 'wallet';
+  return (r._gt = k);
+}
+function giftRegion(r) {
+  if (r._gr) return r._gr;
+  const t = String(r.title);
+  let k = 'global';
+  if (/R\$|\bBRL\b|reais|brasil|brazil|\bBR\b/i.test(t)) k = 'br';
+  else if (/\bUSD?\b|\bUSA\b|estados unidos|united states|\d\s?\$|\$\s?\d/i.test(t)) k = 'us';
+  else if (/\bEUR\b|€|\bEU\b|europ/i.test(t)) k = 'eu';
+  else if (/\b(UK|GBP|£|CAD|AUD|MXN|ARS|TRY|INR|JPY)\b/i.test(t)) k = 'other';
+  else if (r.store === 'nuuvem') k = 'br';            // a Nuuvem vende cartões brasileiros
+  return (r._gr = k);
 }
 
 // ---------- capas (CDN gratuito reduz e converte para WebP; se falhar usa a original) ----------
@@ -470,7 +503,14 @@ function rowPasses(r, ignore = '') {
   switch (state.tab) {
     case 'deals': return r.category === 'game_deal' || r.category === 'dlc';
     case 'free': return r.category === 'free_game' || r.category === 'free_upcoming';
-    case 'gift': return r.category === 'gift_card';
+    case 'gift':
+      if (r.category !== 'gift_card') return false;
+      if (ignore !== 'gtype' && state.giftType !== 'all' && giftType(r) !== state.giftType) return false;
+      if (ignore !== 'region' && state.region !== 'all') {
+        const g = giftRegion(r);
+        if (g !== state.region && !(g === 'global' && giftType(r) !== 'wallet')) return false;   // moedas/assinaturas sem região valem para todos
+      }
+      return true;
     case 'bundle': return r.category === 'bundle';
     default: return true;
   }
@@ -480,6 +520,7 @@ const groupKey = r => (r.category === 'bundle' || r.category === 'gift_card' ? r
 function apply(resetScroll = true) {
   if (state.store !== 'all' && !rows.some(r => r.store === state.store && rowPasses(r, 'store'))) state.store = 'all';
   buildPlatforms();
+  buildGiftbar();
   updateFiltersBadge();
   const q = norm(state.q.trim());
   const map = new Map();
@@ -523,7 +564,9 @@ function apply(resetScroll = true) {
     ending: (a, b) => (new Date(a.best.expires_at || '9999-12-31')) - (new Date(b.best.expires_at || '9999-12-31')),
     az: (a, b) => a.best.title.localeCompare(b.best.title, 'pt-BR'),
   }[state.sort] || hot;
-  groups.sort(by);
+  groups.sort(state.tab === 'gift'
+    ? (a, b) => (giftRegion(a.best) === 'br' ? 0 : 1) - (giftRegion(b.best) === 'br' ? 0 : 1) || by(a, b)
+    : by);
   if (resetScroll) state.shown = PAGE;
   render();
 }
@@ -630,6 +673,19 @@ function buildPlatforms() {
     html += `<button class="pchip ${state.platform === k ? 'on' : ''} ${n ? '' : 'off'}" style="--c:${p.color}" title="${esc(p.title)}" aria-label="${esc(p.title)}" ${isPc ? 'data-pcmenu="1" aria-haspopup="menu"' : `data-platform="${k}"`}>${ico}${lbl}<small>${num(n)}</small>${isPc ? '<i class="mdi mdi-chevron-down caret"></i>' : ''}</button>`;
   }
   $('platforms').innerHTML = html;
+}
+
+function buildGiftbar() {
+  const bar = $('giftbar');
+  bar.hidden = state.tab !== 'gift';
+  if (bar.hidden) return;
+  const tc = countsBy(giftType, 'gtype');
+  const rc = countsBy(giftRegion, 'region');
+  const tAll = Object.values(tc).reduce((a, b) => a + b, 0);
+  const pill = (attr, k, label, n, on) => `<button class="pill ${on ? 'on' : ''} ${n ? '' : 'off'}" ${attr}="${k}">${label}<small>${num(n)}</small></button>`;
+  bar.innerHTML = `
+    <div class="grp"><span class="lbl2">Tipo</span>${GIFT_TYPES.filter(([k]) => k === 'all' || tc[k]).map(([k, l]) => pill('data-gtype', k, l, k === 'all' ? tAll : tc[k], state.giftType === k)).join('')}</div>
+    <div class="grp"><span class="lbl2">Região</span>${REGIONS.map(([k, l]) => pill('data-region', k, l, k === 'all' ? Object.values(rc).reduce((a, b) => a + b, 0) : (rc[k] || 0), state.region === k)).join('')}</div>`;
 }
 
 // ---------- menus suspensos ----------
@@ -864,6 +920,10 @@ document.addEventListener('click', e => {
     else state[k] = Number(f.dataset.v);
     renderFilters(); return apply();
   }
+  const gt = e.target.closest('[data-gtype]');
+  if (gt) { state.giftType = gt.dataset.gtype; return apply(); }
+  const rg = e.target.closest('[data-region]');
+  if (rg) { state.region = rg.dataset.region; try { localStorage.setItem('lc_region', state.region); } catch { /* ignora */ } return apply(); }
   const clr = e.target.closest('[data-clear]');
   if (clr) {
     const k = clr.dataset.clear;

@@ -70,3 +70,9 @@ O GitHub não garante o minuto exato: em horários cheios, a execução agendada
 - **Instant Gaming corrigida**: cada card agora lê só o próprio produto (antes pegava a lista inteira e repetia imagem/preço). Os gift cards partem da página `/pt/xbox/gift-cards/brands/microsoft-store/` e seguem os links das outras marcas encontrados nela.
 - **Loaded (antiga CDKeys)**: nova fonte `loaded`. Primeiro tenta a API GraphQL da loja (Magento); se não der, lê as páginas `deals` e `gift-cards`. Preços em dólar são convertidos para R$ pela cotação do dia (marcados com ≈ no site).
 - Lembrete: a fonte `meta` só funciona depois de rodar `supabase/migration-002.sql`.
+
+## Versão 2.9
+
+- Gift cards: filtro de **Tipo** (saldo/cartão presente, assinaturas, moedas de jogos) e de **Região** (Brasil é o padrão; a escolha fica salva). Cartões do Brasil aparecem primeiro.
+- Instant Gaming: a plataforma do gift card vem da página onde ele aparece (Xbox, PlayStation, Nintendo, PC). O robô tenta ativar a região Brasil e também busca cartões "BRL" direto.
+- Loaded: logo no menu de PC; gift cards da Loaded também ganham plataforma pelo nome.

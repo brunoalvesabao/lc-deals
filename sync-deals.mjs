@@ -483,7 +483,7 @@ async function collectXbox() {
 let browser;
 async function newPage() {
   if (!browser) browser = await chromium.launch({ headless: true, args: ['--disable-blink-features=AutomationControlled'] });
-  const ctx = await browser.newContext({ locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', userAgent: UA, viewport: { width: 1366, height: 900 } });
+  const ctx = await browser.newContext({ locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', userAgent: UA, viewport: { width: 1366, height: 900 }, extraHTTPHeaders: { 'Accept-Language': 'pt-BR,pt;q=0.9' }, geolocation: { latitude: -15.79, longitude: -47.88 }, permissions: ['geolocation'] });
   return ctx.newPage();
 }
 
@@ -850,40 +850,83 @@ async function collectNuuvemGiftCards() {
   return rows;
 }
 
+// Plataforma do gift card pela página onde ele aparece na Instant Gaming
+function igPlatformFromUrl(u) {
+  if (/\/xbox\//.test(u)) return 'xbox';
+  if (/\/(playstation|psn)\//.test(u)) return 'ps';
+  if (/\/(nintendo|switch)\//.test(u)) return 'switch';
+  if (/\/(pc|steam|battle-net|ea-app|ubisoft)\//.test(u)) return 'pc';
+  return null;
+}
+
+// Tenta deixar a Instant Gaming na região/moeda do Brasil (o robô roda nos EUA,
+// e sem isso a loja mostra os cartões americanos em dólar/euro).
+async function igPreferBrazil(page) {
+  for (const u of ['https://www.instant-gaming.com/pt/?currency=BRL', 'https://www.instant-gaming.com/pt/?country=BR&currency=BRL']) {
+    await page.goto(u, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+  }
+  await acceptCookies(page);
+  // Seletor de moeda/país no site (se existir): clica em BRL / Brasil
+  const clicked = await page.evaluate(() => {
+    const els = [...document.querySelectorAll('a, button, li, option, span, div')]
+      .filter(e => e.children.length === 0 && /^\s*(BRL|R\$|Brasil|Brazil)\b/.test(e.textContent || ''));
+    const el = els[0];
+    if (!el) return null;
+    if (el.tagName === 'OPTION') { el.selected = true; el.parentElement.dispatchEvent(new Event('change', { bubbles: true })); }
+    else el.click();
+    return el.textContent.trim().slice(0, 30);
+  }).catch(() => null);
+  await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+  const brl = await page.evaluate(() => /R\$\s*\d/.test(document.body.innerText)).catch(() => false);
+  console.log(`   instant gaming: região Brasil ${brl ? 'ATIVA (preços em R$)' : 'não confirmada'}${clicked ? ` — cliquei em "${clicked}"` : ''}`);
+  return brl;
+}
+
 async function collectInstantGaming() {
   const page = await newPage();
   const rows = [];
   const IG = /instant-gaming\.com\/pt\/\d+-/;
-  // Página de gift cards que você indicou + as outras marcas que aparecerem nela
-  const start = 'https://www.instant-gaming.com/pt/xbox/gift-cards/brands/microsoft-store/';
-  const queue = [start];
+  await igPreferBrazil(page);
+  const roots = [
+    'https://www.instant-gaming.com/pt/xbox/gift-cards/',
+    'https://www.instant-gaming.com/pt/xbox/gift-cards/brands/microsoft-store/',
+    'https://www.instant-gaming.com/pt/playstation/gift-cards/',
+    'https://www.instant-gaming.com/pt/nintendo/gift-cards/',
+    'https://www.instant-gaming.com/pt/pc/gift-cards/',
+  ];
+  const queue = [...roots];
   const visited = new Set();
   async function readListing(url, giftOnly) {
+    const plat = igPlatformFromUrl(url);
     for (let pg = 1; pg <= 10; pg++) {
       const u = pg === 1 ? url : `${url}${url.includes('?') ? '&' : '?'}page=${pg}`;
       try {
-        await page.goto(u, { waitUntil: 'networkidle', timeout: 45000 });
+        const resp = await page.goto(u, { waitUntil: 'networkidle', timeout: 45000 });
+        if (resp && resp.status() >= 400) { console.log(`   instant gaming ${u}: HTTP ${resp.status()}`); break; }
       } catch (e) { console.warn(`   instant gaming ${u}: ${e.message}`); break; }
-      if (pg === 1) await acceptCookies(page);
+      // descobre outras páginas de gift cards (marcas) a partir desta
+      const more = await page.$$eval('a[href*="/gift-cards/"]', as => as.map(a => a.href.split('#')[0].split('?')[0])).catch(() => []);
+      for (const h of more) if (/instant-gaming\.com\/pt\/.+\/gift-cards\//.test(h) && !queue.includes(h)) queue.push(h);
       await page.mouse.wheel(0, 6000); await sleep(1200);
       const cards = await scrapeCards(page, IG);
       let r = await cardsToRows(cards, { source: 'instant_gaming', store: 'instant_gaming' });
-      if (giftOnly) r = r.map(x => ({ ...x, category: 'gift_card', platform: 'giftcard' }));
-      const before = rows.length;
+      if (giftOnly) r = r.map(x => ({ ...x, category: 'gift_card', platform: plat || platformFromTitle(x.title) }));
       const ids = new Set(rows.map(x => x.id));
-      rows.push(...r.filter(x => !ids.has(x.id)));
-      console.log(`   instant gaming ${u.replace('https://www.instant-gaming.com/pt/', '')}: ${cards.length} cards, ${rows.length - before} novos`);
-      if (rows.length === before) break;
+      const fresh = r.filter(x => !ids.has(x.id));
+      rows.push(...fresh);
+      console.log(`   instant gaming ${u.replace('https://www.instant-gaming.com/pt/', '')}: ${cards.length} cards, ${fresh.length} novos`);
+      if (!fresh.length) break;
     }
   }
-  try {
-    await page.goto(start, { waitUntil: 'networkidle', timeout: 45000 });
-    await acceptCookies(page);
-    const more = await page.$$eval('a[href*="/gift-cards/"]', as => as.map(a => a.href.split('#')[0])).catch(() => []);
-    for (const h of more) if (/instant-gaming\.com\/pt\/.+\/gift-cards\//.test(h) && !queue.includes(h)) queue.push(h);
-  } catch (e) { console.warn('   instant gaming start:', e.message); }
-  console.log(`   instant gaming: ${queue.length} páginas de gift cards encontradas`);
-  for (const u of queue.slice(0, 25)) { if (visited.has(u)) continue; visited.add(u); await readListing(u, true); }
+  for (let i = 0; i < queue.length && i < 40; i++) {
+    const u = queue[i];
+    if (visited.has(u)) continue; visited.add(u);
+    await readListing(u, true);
+  }
+  // Cartões brasileiros pela busca (aparecem mesmo quando a região não muda)
+  for (const q of ['BRL', 'Brasil', 'R$']) await readListing(`https://www.instant-gaming.com/pt/pesquisar/?q=${encodeURIComponent(q)}&type%5B%5D=gift-card`, true);
+  const br = rows.filter(r => /\bBRL\b|R\$|reais|brasil/i.test(r.title)).length;
+  console.log(`   instant gaming: ${rows.length} gift cards (${br} do Brasil)`);
   // Jogos mais vendidos (promoções)
   await readListing('https://www.instant-gaming.com/pt/pesquisar/?sort_by=bestsellers_desc', false);
   if (rows.length === 0) await dump(page, 'instant_gaming');
@@ -972,7 +1015,7 @@ async function collectLoaded() {
           id: `loaded:${it.sku || it.url_key}`,
           title: it.name,
           store: 'loaded',
-          platform: gift ? 'giftcard' : platformFromTitle(it.name),
+          platform: platformFromTitle(it.name),
           category: gift ? 'gift_card' : 'game_deal',
           original_price: reg.value,
           discount_price: sale.value,
@@ -997,7 +1040,7 @@ async function collectLoaded() {
         let r = await cardsToRows(cards, { source: 'loaded', store: 'loaded' });
         r = r.map(x => {
           const gift = cat === 'gift-cards' || x.category === 'gift_card';
-          return { ...x, category: gift ? 'gift_card' : 'game_deal', platform: gift ? 'giftcard' : platformFromTitle(x.title) };
+          return { ...x, category: gift ? 'gift_card' : 'game_deal', platform: platformFromTitle(x.title) };
         }).filter(x => !seen.has(x.id));
         r.forEach(x => seen.add(x.id));
         rows.push(...r);
